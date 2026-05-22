@@ -35,15 +35,15 @@ impl DictionarySnapshot {
 
     fn index(
         entries: Vec<(String, Vec<Candidate>)>,
-    ) -> (
-        HashMap<String, Vec<Candidate>>,
-        HashMap<char, Vec<String>>,
-    ) {
+    ) -> (HashMap<String, Vec<Candidate>>, HashMap<char, Vec<String>>) {
         let mut by_reading: HashMap<String, Vec<Candidate>> = HashMap::new();
         let mut by_first_char: HashMap<char, Vec<String>> = HashMap::new();
         for (reading, cands) in entries {
             if let Some(first) = reading.chars().next() {
-                by_first_char.entry(first).or_default().push(reading.clone());
+                by_first_char
+                    .entry(first)
+                    .or_default()
+                    .push(reading.clone());
             }
             by_reading.insert(reading, cands);
         }
@@ -142,12 +142,10 @@ impl DictionarySnapshot {
         chars: &[char],
         start: usize,
     ) -> bool {
-        let mut i = start;
-        for ch in prefix {
+        for (i, ch) in (start..).zip(prefix) {
             if i >= chars.len() || chars[i] != ch {
                 return false;
             }
-            i += 1;
         }
         true
     }

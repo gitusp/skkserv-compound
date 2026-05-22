@@ -51,8 +51,8 @@ impl UserDictionaryWatcher {
     pub async fn start(&self) -> Result<()> {
         let user = self.user_dictionary_path.clone();
         let systems = self.system_dictionary_paths.clone();
-        let snapshot = tokio::task::spawn_blocking(move || load_snapshot(&user, &systems))
-            .await??;
+        let snapshot =
+            tokio::task::spawn_blocking(move || load_snapshot(&user, &systems)).await??;
         self.store.update(snapshot);
 
         let watcher = self.install_watcher()?;
@@ -73,11 +73,11 @@ impl UserDictionaryWatcher {
         self.stopped.store(true, Ordering::Release);
         // Wake the worker so it can observe the stop flag.
         self.notify.notify_one();
-        if let Ok(mut slot) = self.runtime.lock() {
-            if let Some(rt) = slot.take() {
-                rt.worker.abort();
-                // _watcher is dropped here, releasing the FS subscription.
-            }
+        if let Ok(mut slot) = self.runtime.lock()
+            && let Some(rt) = slot.take()
+        {
+            rt.worker.abort();
+            // _watcher is dropped here, releasing the FS subscription.
         }
     }
 
@@ -87,22 +87,20 @@ impl UserDictionaryWatcher {
             .parent()
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        let target_filename: Option<OsString> =
-            target_path.file_name().map(|n| n.to_os_string());
+        let target_filename: Option<OsString> = target_path.file_name().map(|n| n.to_os_string());
 
         let notify = self.notify.clone();
         let target_filename_for_closure = target_filename.clone();
-        let mut watcher =
-            notify::recommended_watcher(move |res: notify::Result<Event>| {
-                if let Ok(event) = res {
-                    let matched = event.paths.iter().any(|p| {
-                        p.file_name().map(|n| n.to_os_string()) == target_filename_for_closure
-                    });
-                    if matched {
-                        notify.notify_one();
-                    }
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+            if let Ok(event) = res {
+                let matched = event.paths.iter().any(|p| {
+                    p.file_name().map(|n| n.to_os_string()) == target_filename_for_closure
+                });
+                if matched {
+                    notify.notify_one();
                 }
-            })?;
+            }
+        })?;
         watcher.watch(&parent, RecursiveMode::NonRecursive)?;
         Ok(watcher)
     }
@@ -121,10 +119,9 @@ impl UserDictionaryWatcher {
                 }
                 let user_clone = user.clone();
                 let systems_clone = systems.clone();
-                let res = tokio::task::spawn_blocking(move || {
-                    load_snapshot(&user_clone, &systems_clone)
-                })
-                .await;
+                let res =
+                    tokio::task::spawn_blocking(move || load_snapshot(&user_clone, &systems_clone))
+                        .await;
                 match res {
                     Ok(Ok(snapshot)) => store.update(snapshot),
                     Ok(Err(e)) => warn!("reindex failed; keeping previous snapshot: {}", e),

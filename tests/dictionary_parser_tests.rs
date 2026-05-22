@@ -30,7 +30,10 @@ fn ignores_empty_lines() {
 fn strips_annotations() {
     let entries = parse("か /化;接尾辞/蚊;昆虫/");
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].candidates, vec!["化".to_string(), "蚊".to_string()]);
+    assert_eq!(
+        entries[0].candidates,
+        vec!["化".to_string(), "蚊".to_string()]
+    );
 }
 
 #[test]
@@ -92,7 +95,10 @@ fn okuri_nashi_has_flag_false() {
 #[test]
 fn dedupes_candidates_within_line() {
     let entries = parse("か /化/化/蚊/");
-    assert_eq!(entries[0].candidates, vec!["化".to_string(), "蚊".to_string()]);
+    assert_eq!(
+        entries[0].candidates,
+        vec!["化".to_string(), "蚊".to_string()]
+    );
 }
 
 #[test]

@@ -43,14 +43,24 @@ fn okuri_snapshot(
 #[test]
 fn combines_seisou_gyousha() {
     let snap = snapshot(&[], &[("せいそう", &["清掃"]), ("ぎょうしゃ", &["業者"])]);
-    let out = generate("せいそうぎょうしゃ", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "せいそうぎょうしゃ",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(out.first().map(String::as_str), Some("清掃業者"));
 }
 
 #[test]
 fn combines_tanjunka() {
     let snap = snapshot(&[], &[("たんじゅん", &["単純"]), ("か", &["化", "蚊"])]);
-    let out = generate("たんじゅんか", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "たんじゅんか",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert!(out.iter().any(|s| s == "単純化"));
 }
 
@@ -64,7 +74,12 @@ fn skips_single_word_exact_match() {
             ("か", &["化"]),
         ],
     );
-    let out = generate("たんじゅんか", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "たんじゅんか",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert!(out.iter().any(|s| s == "単純化"));
     assert_eq!(out.iter().filter(|s| s.as_str() == "単純化").count(), 1);
 }
@@ -80,14 +95,24 @@ fn prefers_fewer_parts() {
             ("ぎょうしゃ", &["業者"]),
         ],
     );
-    let out = generate("せいそうぎょうしゃ", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "せいそうぎょうしゃ",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(out.first().map(String::as_str), Some("清掃業者"));
 }
 
 #[test]
 fn allows_short_readings() {
     let snap = snapshot(&[], &[("たんじゅん", &["単純"]), ("か", &["化"])]);
-    let out = generate("たんじゅんか", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "たんじゅんか",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(out, vec!["単純化".to_string()]);
 }
 
@@ -95,7 +120,10 @@ fn allows_short_readings() {
 fn respects_per_reading_cap() {
     let snap = snapshot(
         &[],
-        &[("たん", &["1", "2", "3", "4", "5", "6", "7"]), ("じゅん", &["A"])],
+        &[
+            ("たん", &["1", "2", "3", "4", "5", "6", "7"]),
+            ("じゅん", &["A"]),
+        ],
     );
     let out = generate(
         "たんじゅん",
@@ -159,9 +187,18 @@ fn prefers_longer_min_part() {
 fn combines_abbrev_katakana() {
     let snap = snapshot(
         &[],
-        &[("mini", &["ミニ"]), ("catalog", &["カタログ"]), ("gift", &["ギフト"])],
+        &[
+            ("mini", &["ミニ"]),
+            ("catalog", &["カタログ"]),
+            ("gift", &["ギフト"]),
+        ],
     );
-    let out = generate("minicataloggift", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "minicataloggift",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(out.first().map(String::as_str), Some("ミニカタログギフト"));
 }
 
@@ -169,10 +206,22 @@ fn combines_abbrev_katakana() {
 fn combines_abbrev_item_card_set() {
     let snap = snapshot(
         &[],
-        &[("item", &["アイテム"]), ("card", &["カード"]), ("set", &["セット"])],
+        &[
+            ("item", &["アイテム"]),
+            ("card", &["カード"]),
+            ("set", &["セット"]),
+        ],
     );
-    let out = generate("itemcardset", &snap, CompoundGeneratorConfig::default(), None);
-    assert_eq!(out.first().map(String::as_str), Some("アイテムカードセット"));
+    let out = generate(
+        "itemcardset",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
+    assert_eq!(
+        out.first().map(String::as_str),
+        Some("アイテムカードセット")
+    );
 }
 
 #[test]
@@ -227,12 +276,7 @@ fn skips_higher_k_once_final_cap_filled() {
             ("い", &["I_X"]),
         ],
     );
-    let out = generate(
-        "あいうえ",
-        &snap,
-        CompoundGeneratorConfig::new(5, 1),
-        None,
-    );
+    let out = generate("あいうえ", &snap, CompoundGeneratorConfig::new(5, 1), None);
     assert_eq!(out, vec!["AIUE"]);
     assert!(!out.iter().any(|s| s == "A_XI_XUE"));
 }
@@ -248,8 +292,16 @@ fn combines_four_part_abbrev() {
             ("set", &["セット"]),
         ],
     );
-    let out = generate("minicataloggiftset", &snap, CompoundGeneratorConfig::default(), None);
-    assert_eq!(out.first().map(String::as_str), Some("ミニカタログギフトセット"));
+    let out = generate(
+        "minicataloggiftset",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
+    assert_eq!(
+        out.first().map(String::as_str),
+        Some("ミニカタログギフトセット")
+    );
 }
 
 #[test]
@@ -277,7 +329,12 @@ fn two_part_beats_three_part_across_k() {
 
 #[test]
 fn combines_okuri_ari_compound() {
-    let snap = okuri_snapshot(&[], &[("もんだい", &["問題"])], &[], &[("なs", &["無", "済"])]);
+    let snap = okuri_snapshot(
+        &[],
+        &[("もんだい", &["問題"])],
+        &[],
+        &[("なs", &["無", "済"])],
+    );
     let out = generate(
         "もんだいな",
         &snap,
@@ -337,7 +394,12 @@ fn okuri_prefix_nil_falls_back_to_okuri_nashi() {
         &[],
         &[("なs", &["無"])],
     );
-    let out = generate("もんだいな", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "もんだいな",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(out, vec!["問題菜".to_string()]);
 }
 
@@ -369,7 +431,12 @@ fn round_robins_between_splits_with_same_min_part_len() {
             ("えお", &["D"]),
         ],
     );
-    let out = generate("あいうえお", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "あいうえお",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(out, vec!["AB", "CD"]);
 }
 
@@ -409,7 +476,12 @@ fn round_robins_zenkengen() {
             ("げん", &["源", "現", "玄", "言", "弦"]),
         ],
     );
-    let out = generate("ぜんけんげん", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "ぜんけんげん",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(out.first().map(String::as_str), Some("全権限"));
     assert!(out.iter().any(|s| s == "全権限"));
 }

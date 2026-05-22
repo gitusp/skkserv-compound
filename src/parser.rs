@@ -73,7 +73,11 @@ pub fn parse_line(raw: &str) -> Option<ParsedEntry> {
     if texts.is_empty() {
         return None;
     }
-    Some(ParsedEntry::with_okuri(reading.to_string(), texts, okuri_ari))
+    Some(ParsedEntry::with_okuri(
+        reading.to_string(),
+        texts,
+        okuri_ari,
+    ))
 }
 
 /// Returns the trailing ASCII lowercase letter if `text` ends with
@@ -82,7 +86,7 @@ pub fn parse_line(raw: &str) -> Option<ParsedEntry> {
 pub fn trailing_okuri(text: &str) -> Option<char> {
     let mut iter = text.chars().rev();
     let last = iter.next()?;
-    if !('a'..='z').contains(&last) {
+    if !last.is_ascii_lowercase() {
         return None;
     }
     let before = iter.next()?;

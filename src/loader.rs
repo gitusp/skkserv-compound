@@ -59,10 +59,7 @@ pub fn build_snapshot(user: &[ParsedEntry], system: &[ParsedEntry]) -> Dictionar
     )
 }
 
-fn merge_bucket(
-    user: &[&ParsedEntry],
-    system: &[&ParsedEntry],
-) -> Vec<(String, Vec<Candidate>)> {
+fn merge_bucket(user: &[&ParsedEntry], system: &[&ParsedEntry]) -> Vec<(String, Vec<Candidate>)> {
     struct Group {
         candidates: Vec<Candidate>,
         seen: HashSet<String>,
@@ -92,10 +89,10 @@ fn merge_bucket(
 
     let mut result: Vec<(String, Vec<Candidate>)> = Vec::with_capacity(order.len());
     for reading in order {
-        if let Some(group) = groups.remove(&reading) {
-            if !group.candidates.is_empty() {
-                result.push((reading, group.candidates));
-            }
+        if let Some(group) = groups.remove(&reading)
+            && !group.candidates.is_empty()
+        {
+            result.push((reading, group.candidates));
         }
     }
     result
@@ -118,21 +115,23 @@ fn decode_with_fallback(bytes: &[u8], path: &str) -> Result<String, DictionaryLo
     if !had_errors {
         return Ok(cow.into_owned());
     }
-    Err(DictionaryLoaderError::EncodingNotRecognized(path.to_string()))
+    Err(DictionaryLoaderError::EncodingNotRecognized(
+        path.to_string(),
+    ))
 }
 
 pub fn expand_tilde(path: &str) -> PathBuf {
-    if path == "~" {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home);
-        }
+    if path == "~"
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home);
     }
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            let mut p = PathBuf::from(home);
-            p.push(rest);
-            return p;
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let mut p = PathBuf::from(home);
+        p.push(rest);
+        return p;
     }
     PathBuf::from(path)
 }

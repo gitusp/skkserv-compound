@@ -126,7 +126,7 @@ fn expand(
     // within-k priority key so that smaller split_idx already encodes
     // (min_part_len DESC, enum_order ASC). The heap comparator then only needs
     // split_idx as the final tiebreaker.
-    splits.sort_by(|a, b| compare_split_key(a, b));
+    splits.sort_by(compare_split_key);
 
     let mut heap: BinaryHeap<PqEntry> = BinaryHeap::new();
     for (idx, info) in splits.iter().enumerate() {
@@ -203,6 +203,7 @@ fn enumerate_splits(
     splits
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enumerate_recursive(
     k: usize,
     depth: usize,
@@ -217,12 +218,12 @@ fn enumerate_recursive(
 ) {
     let n = chars.len();
     if depth == k {
-        if start == n {
-            if let Some(info) = make_split(parts, snapshot, cap, *enum_order, okuri_prefix.is_some())
-            {
-                splits.push(info);
-                *enum_order += 1;
-            }
+        if start == n
+            && let Some(info) =
+                make_split(parts, snapshot, cap, *enum_order, okuri_prefix.is_some())
+        {
+            splits.push(info);
+            *enum_order += 1;
         }
         return;
     }

@@ -33,15 +33,16 @@ async fn loads_on_start() {
     std::fs::write(&path, "あ /亜/\n").unwrap();
 
     let store = DictionaryStore::new();
-    let watcher = UserDictionaryWatcher::new(
-        path.to_str().unwrap().to_string(),
-        vec![],
-        store.clone(),
-    );
+    let watcher =
+        UserDictionaryWatcher::new(path.to_str().unwrap().to_string(), vec![], store.clone());
     watcher.start().await.unwrap();
 
     let snap = store.current();
-    let texts: Vec<&str> = snap.candidates("あ").iter().map(|c| c.text.as_str()).collect();
+    let texts: Vec<&str> = snap
+        .candidates("あ")
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect();
     assert_eq!(texts, vec!["亜"]);
 
     watcher.stop();
@@ -54,11 +55,8 @@ async fn reindex_on_change() {
     std::fs::write(&path, "あ /亜/\n").unwrap();
 
     let store = DictionaryStore::new();
-    let watcher = UserDictionaryWatcher::new(
-        path.to_str().unwrap().to_string(),
-        vec![],
-        store.clone(),
-    );
+    let watcher =
+        UserDictionaryWatcher::new(path.to_str().unwrap().to_string(), vec![], store.clone());
     watcher.start().await.unwrap();
 
     {
@@ -92,18 +90,19 @@ async fn keeps_snapshot_on_failure() {
     std::fs::write(&path, "あ /亜/\n").unwrap();
 
     let store = DictionaryStore::new();
-    let watcher = UserDictionaryWatcher::new(
-        path.to_str().unwrap().to_string(),
-        vec![],
-        store.clone(),
-    );
+    let watcher =
+        UserDictionaryWatcher::new(path.to_str().unwrap().to_string(), vec![], store.clone());
     watcher.start().await.unwrap();
 
     std::fs::write(&path, [0xC0u8, 0xAFu8, 0xFFu8]).unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let snap = store.current();
-    let texts: Vec<&str> = snap.candidates("あ").iter().map(|c| c.text.as_str()).collect();
+    let texts: Vec<&str> = snap
+        .candidates("あ")
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect();
     assert_eq!(texts, vec!["亜"]);
 
     watcher.stop();
@@ -116,11 +115,8 @@ async fn handles_atomic_rename() {
     std::fs::write(&path, "あ /亜/\n").unwrap();
 
     let store = DictionaryStore::new();
-    let watcher = UserDictionaryWatcher::new(
-        path.to_str().unwrap().to_string(),
-        vec![],
-        store.clone(),
-    );
+    let watcher =
+        UserDictionaryWatcher::new(path.to_str().unwrap().to_string(), vec![], store.clone());
     watcher.start().await.unwrap();
 
     {
@@ -261,11 +257,8 @@ async fn coalesces_events_during_reindex() {
     std::fs::write(&path, "あ /v0/\n").unwrap();
 
     let store = DictionaryStore::new();
-    let watcher = UserDictionaryWatcher::new(
-        path.to_str().unwrap().to_string(),
-        vec![],
-        store.clone(),
-    );
+    let watcher =
+        UserDictionaryWatcher::new(path.to_str().unwrap().to_string(), vec![], store.clone());
     watcher.start().await.unwrap();
 
     let store_for_wait = store.clone();
@@ -303,7 +296,11 @@ async fn coalesces_events_during_reindex() {
         let lv = last_value_clone.clone();
         async move {
             let snap = store.current();
-            let t: Vec<String> = snap.candidates(&lr).iter().map(|c| c.text.clone()).collect();
+            let t: Vec<String> = snap
+                .candidates(&lr)
+                .iter()
+                .map(|c| c.text.clone())
+                .collect();
             t == vec![lv]
         }
     })
@@ -339,7 +336,11 @@ async fn coalesces_events_during_reindex() {
         .map(|c| c.text.clone())
         .collect();
     assert_eq!(t, vec![last_value]);
-    let bootstrap: Vec<String> = snap.candidates("あ").iter().map(|c| c.text.clone()).collect();
+    let bootstrap: Vec<String> = snap
+        .candidates("あ")
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
     assert_eq!(bootstrap, vec!["v0".to_string()]);
 
     probe.stop();
@@ -353,11 +354,8 @@ async fn reindex_is_single_flight_under_flood() {
     std::fs::write(&path, "あ /v0/\n").unwrap();
 
     let store = DictionaryStore::new();
-    let watcher = UserDictionaryWatcher::new(
-        path.to_str().unwrap().to_string(),
-        vec![],
-        store.clone(),
-    );
+    let watcher =
+        UserDictionaryWatcher::new(path.to_str().unwrap().to_string(), vec![], store.clone());
     watcher.start().await.unwrap();
 
     let store_for_wait = store.clone();
@@ -395,7 +393,11 @@ async fn reindex_is_single_flight_under_flood() {
         let lv = last_value_clone.clone();
         async move {
             let snap = store.current();
-            let t: Vec<String> = snap.candidates(&lr).iter().map(|c| c.text.clone()).collect();
+            let t: Vec<String> = snap
+                .candidates(&lr)
+                .iter()
+                .map(|c| c.text.clone())
+                .collect();
             t == vec![lv]
         }
     })
@@ -434,7 +436,11 @@ async fn reindex_is_single_flight_under_flood() {
         .map(|c| c.text.clone())
         .collect();
     assert_eq!(t, vec![last_value]);
-    let bootstrap: Vec<String> = snap.candidates("あ").iter().map(|c| c.text.clone()).collect();
+    let bootstrap: Vec<String> = snap
+        .candidates("あ")
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
     assert_eq!(bootstrap, vec!["v0".to_string()]);
 
     probe.stop();

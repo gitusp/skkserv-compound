@@ -25,7 +25,11 @@ fn merges_user_and_system() {
     let user = vec![entry("か", &["蚊"])];
     let system = vec![entry("か", &["化"]), entry("せいそう", &["清掃"])];
     let snapshot = build_snapshot(&user, &system);
-    let ka: Vec<&str> = snapshot.candidates("か").iter().map(|c| c.text.as_str()).collect();
+    let ka: Vec<&str> = snapshot
+        .candidates("か")
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect();
     assert_eq!(ka, vec!["蚊", "化"]);
     let sei: Vec<&str> = snapshot
         .candidates("せいそう")
@@ -53,7 +57,11 @@ fn user_candidates_precede_system_candidates() {
     let user = vec![entry("あ", &["亜"])];
     let system = vec![entry("あ", &["阿", "唖"])];
     let snapshot = build_snapshot(&user, &system);
-    let cs: Vec<&str> = snapshot.candidates("あ").iter().map(|c| c.text.as_str()).collect();
+    let cs: Vec<&str> = snapshot
+        .candidates("あ")
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect();
     assert_eq!(cs, vec!["亜", "阿", "唖"]);
 }
 
@@ -82,7 +90,11 @@ fn okuri_nashi_entries_stay_in_default_bucket() {
     let user = vec![entry("あ", &["亜"])];
     let system = vec![entry("あ", &["阿"])];
     let snapshot = build_snapshot(&user, &system);
-    let cs: Vec<&str> = snapshot.candidates("あ").iter().map(|c| c.text.as_str()).collect();
+    let cs: Vec<&str> = snapshot
+        .candidates("あ")
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect();
     assert_eq!(cs, vec!["亜", "阿"]);
     assert!(snapshot.okuri_ari_candidates("あ").is_empty());
 }
@@ -164,7 +176,11 @@ fn loads_without_system_dictionaries() {
     let user = dir.path().join("user.dict");
     fs::write(&user, "あ /亜/\n").unwrap();
     let snapshot = load_snapshot(user.to_str().unwrap(), &[]).unwrap();
-    let cs: Vec<&str> = snapshot.candidates("あ").iter().map(|c| c.text.as_str()).collect();
+    let cs: Vec<&str> = snapshot
+        .candidates("あ")
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect();
     assert_eq!(cs, vec!["亜"]);
 }
 

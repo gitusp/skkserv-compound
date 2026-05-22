@@ -65,10 +65,7 @@ async fn strips_okuri_marker() {
 
 #[tokio::test]
 async fn opcode1_okuri_ari_compound() {
-    let user = vec![
-        nashi("もんだい", &["問題"]),
-        ari("なs", &["無", "済"]),
-    ];
+    let user = vec![nashi("もんだい", &["問題"]), ari("なs", &["無", "済"])];
     let snap = build_snapshot(&user, &[]);
     let server = SkkServer::new(
         "test",
@@ -124,7 +121,9 @@ async fn opcode_three_returns_host_port() {
 async fn opcode_four_returns_four() {
     let server = make_server(&[], &[]);
     assert_eq!(
-        server.handle_opcode('4', "なにか ", "127.0.0.1", 1178).await,
+        server
+            .handle_opcode('4', "なにか ", "127.0.0.1", 1178)
+            .await,
         OpcodeResult::Reply("4\n".to_string())
     );
 }

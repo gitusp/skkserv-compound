@@ -175,10 +175,7 @@ async fn handle_client(
 /// the next read.
 pub fn extract_messages(buffer: &mut Vec<u8>, charset: IncomingCharset) -> Vec<(char, String)> {
     let mut results: Vec<(char, String)> = Vec::new();
-    loop {
-        let Some(delim_pos) = buffer.iter().position(|&b| b == 0x20 || b == 0x0A) else {
-            break;
-        };
+    while let Some(delim_pos) = buffer.iter().position(|&b| b == 0x20 || b == 0x0A) {
         let payload: Vec<u8> = buffer.drain(..delim_pos).collect();
         // Consume the delimiter byte.
         buffer.drain(..1);
@@ -217,7 +214,7 @@ pub fn sanitize_yomi(yomi: &str) -> (String, Option<String>) {
     if trimmed.is_empty() {
         return (String::new(), None);
     }
-    if trimmed.chars().all(|c| c.is_ascii()) {
+    if trimmed.is_ascii() {
         return (trimmed.to_string(), None);
     }
     if let Some(okuri) = trailing_okuri(trimmed) {
