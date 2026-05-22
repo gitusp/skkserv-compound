@@ -94,3 +94,19 @@ fn dedupes_candidates_within_line() {
     let entries = parse("か /化/化/蚊/");
     assert_eq!(entries[0].candidates, vec!["化".to_string(), "蚊".to_string()]);
 }
+
+#[test]
+fn strips_okuri_ari_bracket_annotations() {
+    // SKK-JISYO.L encodes okuri-ari entries with per-okurigana annotation
+    // blocks like `[し/無/]`. The `[<okuri>` opener and `]` closer are
+    // structural metadata, not candidate texts, and must not surface as
+    // standalone candidates.
+    let entries = parse("なs /無/[し/無/]/[さ/無/成/為/]/[せ/無/成/]/[そ/無/成/為/]/");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reading, "なs");
+    assert!(entries[0].is_okuri_ari);
+    assert_eq!(
+        entries[0].candidates,
+        vec!["無".to_string(), "成".to_string(), "為".to_string()]
+    );
+}

@@ -3,6 +3,7 @@
 use skkserv_compound::dictionary::ParsedEntry;
 use skkserv_compound::generator::{CompoundGeneratorConfig, generate};
 use skkserv_compound::loader::build_snapshot;
+use skkserv_compound::parser::parse;
 use skkserv_compound::snapshot::DictionarySnapshot;
 
 fn nashi(reading: &str, candidates: &[&str]) -> ParsedEntry {
@@ -370,6 +371,31 @@ fn round_robins_between_splits_with_same_min_part_len() {
     );
     let out = generate("あいうえお", &snap, CompoundGeneratorConfig::default(), None);
     assert_eq!(out, vec!["AB", "CD"]);
+}
+
+#[test]
+fn mondaina_s_does_not_emit_okuri_ari_bracket_metadata() {
+    // Real-world SKK-JISYO.L okuri-ari entries embed per-okurigana annotation
+    // blocks (`[し/無/]`). Before the parser fix, the `[し` opener and `]`
+    // closer leaked into candidate output as `問題[し` and `問題]`.
+    let user = parse("");
+    let system = parse(
+        "もんだい /問題/\n\
+         なs /無/[し/無/]/[さ/無/成/為/]/[せ/無/成/]/[そ/無/成/為/]/\n",
+    );
+    let snap = build_snapshot(&user, &system);
+    let out = generate(
+        "もんだいな",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        Some("s"),
+    );
+    assert!(
+        !out.iter().any(|s| s.contains('[') || s.contains(']')),
+        "bracket-annotation metadata leaked into output: {:?}",
+        out
+    );
+    assert_eq!(out.first().map(String::as_str), Some("問題無"));
 }
 
 #[test]

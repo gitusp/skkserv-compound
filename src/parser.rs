@@ -43,6 +43,11 @@ pub fn parse_line(raw: &str) -> Option<ParsedEntry> {
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut texts: Vec<String> = Vec::new();
+    // SKK-JISYO.L encodes okuri-ari entries with per-okurigana annotation
+    // blocks: `/main/[<okuri-hira>/cand/.../]/[<okuri-hira>/cand/.../]/`.
+    // The `[<okuri>` opener and matching `]` closer are structural metadata,
+    // not candidate texts — skip them and only emit the candidates inside.
+    let mut in_okuri_block = false;
     for raw_piece in inner.split('/') {
         let mut text: &str = raw_piece;
         if let Some(semi) = text.find(';') {
@@ -50,6 +55,16 @@ pub fn parse_line(raw: &str) -> Option<ParsedEntry> {
         }
         if text.is_empty() {
             continue;
+        }
+        if okuri_ari {
+            if text.starts_with('[') {
+                in_okuri_block = true;
+                continue;
+            }
+            if in_okuri_block && text == "]" {
+                in_okuri_block = false;
+                continue;
+            }
         }
         if seen.insert(text.to_string()) {
             texts.push(text.to_string());
