@@ -1,27 +1,27 @@
 BINARY    := skkserv-compound
 PREFIX    := $(HOME)/.local
 BINDIR    := $(PREFIX)/bin
-BUILD_DIR := .build/release
+BUILD_DIR := target/release
 AGENT     := io.github.gitusp.skkserv-compound
 
-.PHONY: all build install reload deploy test clean
+.PHONY: all build install reload-darwin deploy-darwin test clean
 
 all: build
 
 build:
-	swift build -c release
+	cargo build --release
 
 install: build
 	mkdir -p $(BINDIR)
 	install -m 0755 $(BUILD_DIR)/$(BINARY) $(BINDIR)/$(BINARY)
 
-reload:
+reload-darwin:
 	launchctl kickstart -k gui/$(shell id -u)/$(AGENT)
 
-deploy: install reload
+deploy-darwin: install reload-darwin
 
 test:
-	swift test
+	cargo test
 
 clean:
-	swift package clean
+	cargo clean

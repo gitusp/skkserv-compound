@@ -68,7 +68,7 @@ skkserv-compound \
 - 補完候補の生成 (opcode `4` は常に `4\n`)
 - 送り仮名 hiragana の挿入や活用変換 (連結漢字部分だけを返し、送り仮名はクライアントが補う)
 - 長文変換
-- Linux 対応 / GUI アプリ
+- GUI アプリ
 
 ## skkserv プロトコル
 
@@ -83,8 +83,8 @@ skkserv-compound \
 ## ビルド・テスト
 
 ```sh
-swift build
-swift test
+cargo build --release
+cargo test
 ```
 
-macOS 14 以上を想定しています。
+macOS / Linux + Rust 1.95 以上を想定しています。

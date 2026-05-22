@@ -1,6 +1,6 @@
 # 候補生成ロジック詳細仕様
 
-`CompoundGenerator` が `(yomi, snapshot, config, okuriPrefix)` を入力として候補リストを返すまでの全工程の仕様。README §候補生成のルール の補足ドキュメント。実装本体は [`Sources/skkserv-compound/CompoundGenerator.swift`](../Sources/skkserv-compound/CompoundGenerator.swift)。
+`CompoundGenerator` が `(yomi, snapshot, config, okuriPrefix)` を入力として候補リストを返すまでの全工程の仕様。README §候補生成のルール の補足ドキュメント。実装本体は [`src/generator.rs`](../src/generator.rs)。
 
 このドキュメントは「コードが何をするか」をコードと一対一で写し取ったものです。コードを変えるときはここも同時に変えてください。
 
