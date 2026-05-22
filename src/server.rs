@@ -4,9 +4,15 @@ use crate::generator::{CompoundGeneratorConfig, generate};
 use crate::parser::trailing_okuri;
 use crate::store::DictionaryStore;
 use std::io;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{info, warn};
+
+// Upper bound on the per-connection request buffer. SKK requests are tiny
+// (opcode + short reading + delimiter), so anything beyond this is either a
+// broken client or an attempt to exhaust memory.
+const MAX_PENDING_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncomingCharset {
@@ -75,7 +81,9 @@ impl SkkServer {
         port: u16,
         incoming_charset: IncomingCharset,
     ) -> io::Result<()> {
-        let listener = TcpListener::bind(format!("{}:{}", host, port)).await?;
+        // Pass `(host, port)` so ToSocketAddrs handles IPv6 literals without
+        // requiring the caller to bracket them.
+        let listener = TcpListener::bind((host, port)).await?;
         info!(
             "Server started on {}:{} with incoming charset {}.",
             host,
@@ -84,12 +92,22 @@ impl SkkServer {
         );
 
         loop {
-            let (stream, _peer) = listener.accept().await?;
+            let (stream, peer) = match listener.accept().await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    // Transient errors (EMFILE, ECONNABORTED, etc.) must not
+                    // take the whole server down. Log and back off briefly so
+                    // we don't busy-spin if the condition persists.
+                    warn!("accept error: {}", e);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
             let server = self.clone();
             let host = host.to_string();
             tokio::spawn(async move {
                 if let Err(e) = handle_client(stream, server, host, port, incoming_charset).await {
-                    warn!("Hit error: {}", e);
+                    warn!("client {} error: {}", peer, e);
                 }
             });
         }
@@ -110,7 +128,12 @@ impl SkkServer {
                 // Mirror Swift's `Host.current().localizedName ?? ""`, which on
                 // macOS returns the LocalHostName (no trailing `.local`).
                 let hostname = local_host_name();
-                OpcodeResult::Reply(format!("{}/{}:{} ", hostname, host, port))
+                OpcodeResult::Reply(format!(
+                    "{}/{}:{} ",
+                    hostname,
+                    format_host_for_reply(host),
+                    port
+                ))
             }
             '4' => OpcodeResult::Reply("4\n".to_string()),
             other => {
@@ -132,11 +155,34 @@ impl SkkServer {
             self.generator_config,
             okuri_prefix.as_deref(),
         );
-        if candidates.is_empty() {
+        // Drop characters that would corrupt the SKK wire framing (`/` is the
+        // separator, `\n` terminates the reply) or break line-oriented
+        // clients (`\r`, NUL). Resulting empty candidates are filtered out.
+        let sanitized: Vec<String> = candidates
+            .iter()
+            .map(|c| sanitize_candidate_for_wire(c))
+            .filter(|c| !c.is_empty())
+            .collect();
+        if sanitized.is_empty() {
             "4\n".to_string()
         } else {
-            format!("1/{}/\n", candidates.join("/"))
+            format!("1/{}/\n", sanitized.join("/"))
         }
+    }
+}
+
+fn sanitize_candidate_for_wire(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, '/' | '\n' | '\r' | '\0'))
+        .collect()
+}
+
+fn format_host_for_reply(host: &str) -> String {
+    // Bracket bare IPv6 literals so clients can split host:port unambiguously.
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{}]", host)
+    } else {
+        host.to_string()
     }
 }
 
@@ -155,6 +201,15 @@ async fn handle_client(
             break;
         }
         pending.extend_from_slice(&buf[..n]);
+        // Cap pending growth so a client that never sends a delimiter cannot
+        // exhaust memory.
+        if pending.len() > MAX_PENDING_BYTES {
+            warn!(
+                "client buffer exceeded {} bytes without delimiter; closing connection",
+                MAX_PENDING_BYTES
+            );
+            break;
+        }
         let requests = extract_messages(&mut pending, charset);
         for (opcode, operand) in requests {
             match server.handle_opcode(opcode, &operand, &host, port).await {

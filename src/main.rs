@@ -6,7 +6,8 @@ use skkserv_compound::server::{IncomingCharset, SkkServer};
 use skkserv_compound::store::DictionaryStore;
 use skkserv_compound::watcher::UserDictionaryWatcher;
 use std::process::ExitCode;
-use tracing::error;
+use std::sync::Arc;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -107,17 +108,17 @@ fn main() -> ExitCode {
     {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Failed to start runtime: {}", e);
+            error!("Failed to start runtime: {}", e);
             return ExitCode::from(1);
         }
     };
 
     let store = DictionaryStore::new();
-    let watcher = UserDictionaryWatcher::new(
+    let watcher = Arc::new(UserDictionaryWatcher::new(
         args.user_dictionary.clone(),
         args.system_dictionaries.clone(),
         store.clone(),
-    );
+    ));
 
     let server = SkkServer::new(
         skkserv_compound::VERSION,
@@ -129,10 +130,21 @@ fn main() -> ExitCode {
     let bind_address = args.bind_address.clone();
     let port = args.port;
     let charset = args.incoming_charset.into_server();
+    let watcher_for_async = watcher.clone();
 
     let result: Result<(), anyhow::Error> = runtime.block_on(async move {
-        watcher.start().await?;
-        server.run(&bind_address, port, charset).await?;
+        watcher_for_async.start().await?;
+        // Run the server alongside a SIGINT/SIGTERM-style shutdown signal so
+        // Ctrl-C unwinds cleanly instead of killing in-flight requests.
+        tokio::select! {
+            res = server.run(&bind_address, port, charset) => {
+                res?;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received shutdown signal, stopping.");
+            }
+        }
+        watcher_for_async.stop();
         Ok(())
     });
 

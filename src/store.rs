@@ -20,14 +20,21 @@ impl DictionaryStore {
     }
 
     pub fn update(&self, snapshot: DictionarySnapshot) {
-        let mut guard = self.inner.write().expect("DictionaryStore lock poisoned");
+        // Recover from a poisoned lock rather than cascading the panic to
+        // every subsequent request: the lock only ever guards a pointer swap,
+        // so the inner state is always consistent regardless of where a
+        // previous panic occurred.
+        let mut guard = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = Arc::new(snapshot);
     }
 
     pub fn current(&self) -> Arc<DictionarySnapshot> {
         self.inner
             .read()
-            .expect("DictionaryStore lock poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 }

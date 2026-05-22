@@ -57,7 +57,15 @@ pub fn parse_line(raw: &str) -> Option<ParsedEntry> {
             continue;
         }
         if okuri_ari {
-            if text.starts_with('[') {
+            // Only treat `[<hiragana>` as a block opener; a candidate that
+            // legitimately starts with `[` followed by anything else (e.g.
+            // `[英語]亜`) must not be swallowed.
+            if let Some(rest) = text.strip_prefix('[')
+                && rest
+                    .chars()
+                    .next()
+                    .is_some_and(|c| (0x3041..=0x3096).contains(&(c as u32)))
+            {
                 in_okuri_block = true;
                 continue;
             }

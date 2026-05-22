@@ -2,7 +2,7 @@
 
 use crate::loader::{expand_tilde, load_snapshot};
 use crate::store::DictionaryStore;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use notify::{Event, RecursiveMode, Watcher};
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ pub struct UserDictionaryWatcher {
 
 struct Runtime {
     _watcher: notify::RecommendedWatcher,
-    worker: JoinHandle<()>,
+    _worker: JoinHandle<()>,
 }
 
 impl UserDictionaryWatcher {
@@ -46,61 +46,102 @@ impl UserDictionaryWatcher {
         }
     }
 
-    /// Loads the initial snapshot synchronously, installs the change watcher,
-    /// and spawns the re-index worker task.
+    /// Installs the change watcher, loads the initial snapshot, and spawns
+    /// the re-index worker task. The watcher is installed before the initial
+    /// load so dictionary edits that land during the load are not lost.
     pub async fn start(&self) -> Result<()> {
+        {
+            let slot = self.runtime_lock();
+            if slot.is_some() {
+                return Err(anyhow!("UserDictionaryWatcher already started"));
+            }
+        }
+        // Reset the stop flag so a start-after-stop cycle leaves the new
+        // worker live instead of exiting on its first wake-up.
+        self.stopped.store(false, Ordering::Release);
+
+        // Install the watcher first: any user-dict change that lands during
+        // the initial load will leave a pending notify permit for the worker
+        // to pick up immediately, instead of being lost in a TOCTOU window.
+        let watcher = self.install_watcher()?;
+
         let user = self.user_dictionary_path.clone();
         let systems = self.system_dictionary_paths.clone();
         let snapshot =
             tokio::task::spawn_blocking(move || load_snapshot(&user, &systems)).await??;
         self.store.update(snapshot);
 
-        let watcher = self.install_watcher()?;
         let worker = self.spawn_worker();
 
-        let mut slot = self
-            .runtime
-            .lock()
-            .expect("UserDictionaryWatcher runtime lock poisoned");
+        let mut slot = self.runtime_lock();
+        if slot.is_some() {
+            // Another start() raced and won; abandon our setup.
+            worker.abort();
+            return Err(anyhow!("UserDictionaryWatcher already started"));
+        }
         *slot = Some(Runtime {
             _watcher: watcher,
-            worker,
+            _worker: worker,
         });
         Ok(())
     }
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
-        // Wake the worker so it can observe the stop flag.
+        // Wake the worker so it can observe the stop flag and exit cleanly.
+        // We do NOT call worker.abort(): aborting cancels the await on
+        // spawn_blocking but cannot cancel the OS thread executing the
+        // blocking load. Letting the worker observe `stopped` and return
+        // gives it a chance to skip an in-flight reindex's store.update.
         self.notify.notify_one();
-        if let Ok(mut slot) = self.runtime.lock()
-            && let Some(rt) = slot.take()
-        {
-            rt.worker.abort();
-            // _watcher is dropped here, releasing the FS subscription.
-        }
+        let mut slot = self.runtime_lock();
+        // Dropping Runtime drops the FS subscription (`_watcher`) and
+        // detaches the worker JoinHandle (`_worker`); the detached worker
+        // exits on the next loop iteration once it observes `stopped`.
+        let _ = slot.take();
+    }
+
+    fn runtime_lock(&self) -> std::sync::MutexGuard<'_, Option<Runtime>> {
+        self.runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn install_watcher(&self) -> Result<notify::RecommendedWatcher> {
         let target_path = expand_tilde(&self.user_dictionary_path);
-        let parent: PathBuf = target_path
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
+        // Path::parent() returns Some(empty) for bare filenames like
+        // "user.dict", which is unusable as a watch target. Fall back to the
+        // current directory in both the None and empty cases.
+        let parent: PathBuf = match target_path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => PathBuf::from(p),
+            _ => PathBuf::from("."),
+        };
         let target_filename: Option<OsString> = target_path.file_name().map(|n| n.to_os_string());
+        if target_filename.is_none() {
+            return Err(anyhow!(
+                "user dictionary path '{}' has no file name component",
+                self.user_dictionary_path
+            ));
+        }
 
         let notify = self.notify.clone();
         let target_filename_for_closure = target_filename.clone();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            if let Ok(event) = res {
-                let matched = event.paths.iter().any(|p| {
-                    p.file_name().map(|n| n.to_os_string()) == target_filename_for_closure
-                });
-                if matched {
-                    notify.notify_one();
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<Event>| match res {
+                Ok(event) => {
+                    let matched = event.paths.iter().any(|p| {
+                        p.file_name().map(|n| n.to_os_string()) == target_filename_for_closure
+                    });
+                    if matched {
+                        notify.notify_one();
+                    }
                 }
-            }
-        })?;
+                Err(e) => {
+                    // Surface backend failures so a silently-broken watch is
+                    // visible in the operator's log instead of stalling reindex.
+                    warn!("file watcher backend error: {}", e);
+                }
+            })?;
         watcher.watch(&parent, RecursiveMode::NonRecursive)?;
         Ok(watcher)
     }
@@ -122,6 +163,13 @@ impl UserDictionaryWatcher {
                 let res =
                     tokio::task::spawn_blocking(move || load_snapshot(&user_clone, &systems_clone))
                         .await;
+                // Re-check stop before publishing: stop() may have been
+                // called while the blocking load was in flight, and we do
+                // not want to overwrite the store after the watcher is
+                // logically shut down.
+                if stopped.load(Ordering::Acquire) {
+                    break;
+                }
                 match res {
                     Ok(Ok(snapshot)) => store.update(snapshot),
                     Ok(Err(e)) => warn!("reindex failed; keeping previous snapshot: {}", e),

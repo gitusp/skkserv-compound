@@ -291,7 +291,16 @@ fn make_split(
     let mut part_lens: Vec<usize> = parts.iter().map(|p| p.chars().count()).collect();
     if last_is_okuri_ari {
         let last = part_lens.len() - 1;
-        part_lens[last] = part_lens[last].saturating_sub(1);
+        // An okuri-ari reading must be `<hiragana stem><ASCII letter>`, so
+        // the raw length is at least 2 and the stem length is at least 1.
+        // Refuse the split if the upstream invariants are ever violated
+        // (e.g. by a future caller constructing snapshots directly), rather
+        // than silently producing a length-zero stem.
+        let raw = part_lens[last];
+        if raw < 2 {
+            return None;
+        }
+        part_lens[last] = raw - 1;
     }
     let min_part_len = *part_lens.iter().min()?;
     let mut part_candidates: Vec<Vec<Candidate>> = Vec::with_capacity(parts.len());
