@@ -190,6 +190,18 @@ impl StoreUpdateProbe {
     }
 
     fn start(&mut self) {
+        // Capture a baseline synchronously so the spawned task always has a
+        // prior fingerprint to compare against, even if subsequent store
+        // updates are coalesced before the task gets its first turn.
+        {
+            let snap = self.store.current();
+            let fp = Self::fingerprint(&snap);
+            self.records.lock().unwrap().push(Record {
+                fingerprint: fp,
+                reading_count: snap.entries_by_reading.len(),
+            });
+        }
+
         let store = self.store.clone();
         let stop = self.stop.clone();
         let records = self.records.clone();
