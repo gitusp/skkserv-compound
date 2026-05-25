@@ -3,11 +3,11 @@
 use crate::generator::{CompoundGeneratorConfig, generate};
 use crate::parser::trailing_okuri;
 use crate::store::DictionaryStore;
+use log::{info, warn};
 use std::io;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{info, warn};
 
 // Upper bound on the per-connection request buffer. SKK requests are tiny
 // (opcode + short reading + delimiter), so anything beyond this is either a

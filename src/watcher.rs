@@ -1,16 +1,31 @@
 // SPDX-License-Identifier: MIT
 
+use crate::loader::DictionaryLoaderError;
 use crate::loader::{expand_tilde, load_snapshot};
 use crate::store::DictionaryStore;
-use anyhow::{Result, anyhow};
+use log::warn;
 use notify::{Event, RecursiveMode, Watcher};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use thiserror::Error;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
-use tracing::warn;
+
+#[derive(Debug, Error)]
+pub enum WatcherError {
+    #[error("UserDictionaryWatcher already started")]
+    AlreadyStarted,
+    #[error("user dictionary path '{0}' has no file name component")]
+    PathHasNoFileName(String),
+    #[error(transparent)]
+    Notify(#[from] notify::Error),
+    #[error(transparent)]
+    Load(#[from] DictionaryLoaderError),
+    #[error(transparent)]
+    Join(#[from] tokio::task::JoinError),
+}
 
 /// Loads the user/system dictionaries once at start, then re-loads on every
 /// detected change to the user dictionary file. Re-indexes are single-flight:
@@ -49,11 +64,11 @@ impl UserDictionaryWatcher {
     /// Installs the change watcher, loads the initial snapshot, and spawns
     /// the re-index worker task. The watcher is installed before the initial
     /// load so dictionary edits that land during the load are not lost.
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(&self) -> Result<(), WatcherError> {
         {
             let slot = self.runtime_lock();
             if slot.is_some() {
-                return Err(anyhow!("UserDictionaryWatcher already started"));
+                return Err(WatcherError::AlreadyStarted);
             }
         }
         // Reset the stop flag so a start-after-stop cycle leaves the new
@@ -77,7 +92,7 @@ impl UserDictionaryWatcher {
         if slot.is_some() {
             // Another start() raced and won; abandon our setup.
             worker.abort();
-            return Err(anyhow!("UserDictionaryWatcher already started"));
+            return Err(WatcherError::AlreadyStarted);
         }
         *slot = Some(Runtime {
             _watcher: watcher,
@@ -107,7 +122,7 @@ impl UserDictionaryWatcher {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn install_watcher(&self) -> Result<notify::RecommendedWatcher> {
+    fn install_watcher(&self) -> Result<notify::RecommendedWatcher, WatcherError> {
         let target_path = expand_tilde(&self.user_dictionary_path);
         // Path::parent() returns Some(empty) for bare filenames like
         // "user.dict", which is unusable as a watch target. Fall back to the
@@ -118,9 +133,8 @@ impl UserDictionaryWatcher {
         };
         let target_filename: Option<OsString> = target_path.file_name().map(|n| n.to_os_string());
         if target_filename.is_none() {
-            return Err(anyhow!(
-                "user dictionary path '{}' has no file name component",
-                self.user_dictionary_path
+            return Err(WatcherError::PathHasNoFileName(
+                self.user_dictionary_path.clone(),
             ));
         }
 

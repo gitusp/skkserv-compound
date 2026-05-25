@@ -18,10 +18,9 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time", "signal"] }
 encoding_rs = "0.8"
 notify = "8"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+log = "0.4"
+env_logger = "0.11"
 thiserror = "2"
-anyhow = "1"
 
 [dev-dependencies]
 tempfile = "3"

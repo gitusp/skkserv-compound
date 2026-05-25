@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 
 use clap::{Parser, ValueEnum};
+use log::{error, info};
 use skkserv_compound::generator::CompoundGeneratorConfig;
 use skkserv_compound::server::{IncomingCharset, SkkServer};
 use skkserv_compound::store::DictionaryStore;
 use skkserv_compound::watcher::UserDictionaryWatcher;
 use std::process::ExitCode;
 use std::sync::Arc;
-use tracing::{error, info};
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -72,26 +71,25 @@ enum LogLevelArg {
 }
 
 impl LogLevelArg {
-    fn into_filter(self) -> EnvFilter {
-        let directive = match self {
-            Self::Trace => "trace",
-            Self::Debug => "debug",
-            // swift-log distinguishes info/notice; tracing collapses to INFO.
-            Self::Info | Self::Notice => "info",
-            Self::Warning => "warn",
-            // swift-log distinguishes error/critical; tracing collapses to ERROR.
-            Self::Error | Self::Critical => "error",
-        };
-        EnvFilter::new(directive)
+    fn into_level(self) -> log::LevelFilter {
+        match self {
+            Self::Trace => log::LevelFilter::Trace,
+            Self::Debug => log::LevelFilter::Debug,
+            // swift-log distinguishes info/notice; the log crate collapses to Info.
+            Self::Info | Self::Notice => log::LevelFilter::Info,
+            Self::Warning => log::LevelFilter::Warn,
+            // swift-log distinguishes error/critical; the log crate collapses to Error.
+            Self::Error | Self::Critical => log::LevelFilter::Error,
+        }
     }
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(args.log_level.into_filter())
-        .with_writer(std::io::stderr)
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .filter_level(args.log_level.into_level())
+        .target(env_logger::Target::Stderr)
         .init();
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -123,7 +121,7 @@ fn main() -> ExitCode {
     let charset = args.incoming_charset.into_server();
     let watcher_for_async = watcher.clone();
 
-    let result: Result<(), anyhow::Error> = runtime.block_on(async move {
+    let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async move {
         watcher_for_async.start().await?;
         // Run the server alongside a SIGINT/SIGTERM-style shutdown signal so
         // Ctrl-C unwinds cleanly instead of killing in-flight requests.
