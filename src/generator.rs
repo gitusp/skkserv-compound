@@ -79,8 +79,6 @@ pub fn generate(
 struct SplitInfo {
     part_candidates: Vec<Vec<Candidate>>,
     num_parts: usize,
-    min_part_len: usize,
-    enum_order: usize,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -89,24 +87,23 @@ struct PqEntry {
     rank: usize,
     indices: Vec<usize>,
     text: String,
-    // Cached split min_part_len for ordering — set when pushed.
-    min_part_len: usize,
 }
 
-// BinaryHeap is a max-heap; we want pop order to follow Swift's MinHeap
-// comparator: (min_part_len DESC, rank ASC, split_idx ASC). So an entry is
-// "greater" when it should be popped first.
+// BinaryHeap is a max-heap, but the pop order we want is (rank ASC, split_idx
+// ASC): a round-robin across every split of the current k — all splits' rank-0
+// combination first, then all rank-1, and so on — with split_idx (which equals
+// enumeration order, i.e. dictionary registration order) as the deterministic
+// tiebreak within a rank. There is deliberately no length/balance heuristic:
+// per the project's "no semantic judgement" stance, ordering beyond
+// fewer-parts-first is left to dictionary order and user-dictionary learning.
+// So an entry is "greater" (popped first) when its rank is smaller, or on equal
+// rank when its split_idx is smaller.
 impl Ord for PqEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.min_part_len.cmp(&other.min_part_len) {
-            Ordering::Equal => {}
-            ord => return ord, // larger min_part_len => greater => popped first
-        }
         match self.rank.cmp(&other.rank) {
-            Ordering::Equal => {}
-            ord => return ord.reverse(), // smaller rank => greater => popped first
+            Ordering::Equal => self.split_idx.cmp(&other.split_idx).reverse(),
+            ord => ord.reverse(), // smaller rank => greater => popped first
         }
-        self.split_idx.cmp(&other.split_idx).reverse()
     }
 }
 
@@ -117,17 +114,13 @@ impl PartialOrd for PqEntry {
 }
 
 fn expand(
-    mut splits: Vec<SplitInfo>,
+    splits: Vec<SplitInfo>,
     final_cap: usize,
     seen: &mut HashSet<String>,
     result: &mut Vec<String>,
 ) {
-    // All splits in this batch share the same num_parts; pre-sort by the
-    // within-k priority key so that smaller split_idx already encodes
-    // (min_part_len DESC, enum_order ASC). The heap comparator then only needs
-    // split_idx as the final tiebreaker.
-    splits.sort_by(compare_split_key);
-
+    // `splits` arrives in enumeration order (dictionary registration order); the
+    // index into it is used directly as split_idx, the heap's only tiebreak.
     let mut heap: BinaryHeap<PqEntry> = BinaryHeap::new();
     for (idx, info) in splits.iter().enumerate() {
         let indices = vec![0usize; info.num_parts];
@@ -137,7 +130,6 @@ fn expand(
             rank: 0,
             indices,
             text,
-            min_part_len: info.min_part_len,
         });
     }
 
@@ -172,7 +164,6 @@ fn expand(
                 rank: entry.rank + 1,
                 indices: next,
                 text,
-                min_part_len: info.min_part_len,
             });
         }
     }
@@ -186,7 +177,6 @@ fn enumerate_splits(
     okuri_prefix: Option<char>,
 ) -> Vec<SplitInfo> {
     let mut splits: Vec<SplitInfo> = Vec::new();
-    let mut enum_order = 0usize;
     let mut parts: Vec<String> = Vec::with_capacity(k);
     enumerate_recursive(
         k,
@@ -198,7 +188,6 @@ fn enumerate_splits(
         okuri_prefix,
         &mut parts,
         &mut splits,
-        &mut enum_order,
     );
     splits
 }
@@ -214,16 +203,13 @@ fn enumerate_recursive(
     okuri_prefix: Option<char>,
     parts: &mut Vec<String>,
     splits: &mut Vec<SplitInfo>,
-    enum_order: &mut usize,
 ) {
     let n = chars.len();
     if depth == k {
         if start == n
-            && let Some(info) =
-                make_split(parts, snapshot, cap, *enum_order, okuri_prefix.is_some())
+            && let Some(info) = make_split(parts, snapshot, cap, okuri_prefix.is_some())
         {
             splits.push(info);
-            *enum_order += 1;
         }
         return;
     }
@@ -268,7 +254,6 @@ fn enumerate_recursive(
             okuri_prefix,
             parts,
             splits,
-            enum_order,
         );
         parts.pop();
     }
@@ -278,33 +263,15 @@ fn make_split(
     parts: &[String],
     snapshot: &DictionarySnapshot,
     cap: usize,
-    enum_order: usize,
     last_is_okuri_ari: bool,
 ) -> Option<SplitInfo> {
     if parts.is_empty() {
         return None;
     }
-    // For okuri-ari mode the last part's dictionary key embeds the trailing
-    // ASCII letter (e.g. `なs`), but the input only contributes the hiragana
-    // stem. Score the split by input-consumed length so it competes fairly
-    // against okuri-nashi splits of the same body.
-    let mut part_lens: Vec<usize> = parts.iter().map(|p| p.chars().count()).collect();
-    if last_is_okuri_ari {
-        let last = part_lens.len() - 1;
-        // An okuri-ari reading must be `<hiragana stem><ASCII letter>`, so
-        // the raw length is at least 2 and the stem length is at least 1.
-        // Refuse the split if the upstream invariants are ever violated
-        // (e.g. by a future caller constructing snapshots directly), rather
-        // than silently producing a length-zero stem.
-        let raw = part_lens[last];
-        if raw < 2 {
-            return None;
-        }
-        part_lens[last] = raw - 1;
-    }
-    let min_part_len = *part_lens.iter().min()?;
     let mut part_candidates: Vec<Vec<Candidate>> = Vec::with_capacity(parts.len());
     for (i, reading) in parts.iter().enumerate() {
+        // For okuri-ari mode the last part is keyed in the okuri-ari bucket
+        // (e.g. `なs`); every other part comes from the okuri-nashi bucket.
         let is_last_okuri_ari = last_is_okuri_ari && (i == parts.len() - 1);
         let all = if is_last_okuri_ari {
             snapshot.okuri_ari_candidates(reading)
@@ -324,8 +291,6 @@ fn make_split(
     Some(SplitInfo {
         part_candidates,
         num_parts: parts.len(),
-        min_part_len,
-        enum_order,
     })
 }
 
@@ -335,15 +300,4 @@ fn build_text(info: &SplitInfo, indices: &[usize]) -> String {
         s.push_str(&info.part_candidates[part_idx][cand_idx].text);
     }
     s
-}
-
-fn compare_split_key(a: &SplitInfo, b: &SplitInfo) -> Ordering {
-    // Within a single expand() call all splits share num_parts; cross-k
-    // ordering is enforced by the outer k loop in generate(). The only
-    // hierarchical within-k signal is min_part_len (longer shortest part
-    // wins); enum_order is the deterministic fallback.
-    if a.min_part_len != b.min_part_len {
-        return b.min_part_len.cmp(&a.min_part_len);
-    }
-    a.enum_order.cmp(&b.enum_order)
 }

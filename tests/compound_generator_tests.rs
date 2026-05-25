@@ -169,18 +169,27 @@ fn dedupes_candidates() {
 }
 
 #[test]
-fn prefers_longer_min_part() {
+fn does_not_bury_short_suffix_split() {
+    // No length/balance heuristic: a derivational split like 構造+化 (whose
+    // shortest part is the 1-char suffix か) must NOT be drained behind every
+    // candidate of a longer-balanced competing split. Same-k splits round-robin
+    // by rank, so 構造化 surfaces in the first round, not after こう+ぞうか is
+    // exhausted. `こうぞう` is registered before `こう`, so the 構造+化 split
+    // enumerates first and 構造化 leads.
     let snap = snapshot(
         &[],
         &[
-            ("あい", &["X"]),
-            ("うえ", &["Y"]),
-            ("あ", &["P"]),
-            ("いうえ", &["Q"]),
+            ("こうぞう", &["構造"]),
+            ("か", &["化", "課"]),
+            ("こう", &["項", "公"]),
+            ("ぞうか", &["増加", "造花"]),
         ],
     );
-    let out = generate("あいうえ", &snap, CompoundGeneratorConfig::default(), None);
-    assert_eq!(out.first().map(String::as_str), Some("XY"));
+    let out = generate("こうぞうか", &snap, CompoundGeneratorConfig::default(), None);
+    assert_eq!(
+        out,
+        vec!["構造化", "項増加", "構造課", "項造花", "公増加", "公造花"]
+    );
 }
 
 #[test]
@@ -421,7 +430,7 @@ fn okuri_ari_respects_per_reading_cap() {
 }
 
 #[test]
-fn round_robins_between_splits_with_same_min_part_len() {
+fn round_robins_between_splits_at_same_k() {
     let snap = snapshot(
         &[],
         &[
