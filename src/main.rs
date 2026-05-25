@@ -17,10 +17,6 @@ use tracing_subscriber::EnvFilter;
     about = "A skkserv that returns compound candidates built from SKK dictionaries."
 )]
 struct Args {
-    /// Network address to bind to.
-    #[arg(long, default_value = "127.0.0.1")]
-    bind_address: String,
-
     /// The network port number to use.
     #[arg(long, default_value_t = 1178)]
     port: u16,
@@ -127,7 +123,6 @@ fn main() -> ExitCode {
         CompoundGeneratorConfig::new(args.max_candidates_per_reading, args.max_final_candidates),
     );
 
-    let bind_address = args.bind_address.clone();
     let port = args.port;
     let charset = args.incoming_charset.into_server();
     let watcher_for_async = watcher.clone();
@@ -137,7 +132,7 @@ fn main() -> ExitCode {
         // Run the server alongside a SIGINT/SIGTERM-style shutdown signal so
         // Ctrl-C unwinds cleanly instead of killing in-flight requests.
         tokio::select! {
-            res = server.run(&bind_address, port, charset) => {
+            res = server.run(port, charset) => {
                 res?;
             }
             _ = tokio::signal::ctrl_c() => {

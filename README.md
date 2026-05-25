@@ -17,7 +17,6 @@ abbrev エントリ (ASCII 見出し語) も同じアルゴリズムで連結部
 
 ```sh
 skkserv-compound \
-  --bind-address 127.0.0.1 \
   --port 1178 \
   --incoming-charset EUC-JP \
   --user-dictionary ~/.skk-jisyo \
@@ -29,8 +28,7 @@ skkserv-compound \
 |---|---|---|
 | `--user-dictionary` | (required) | SKK ユーザー辞書ファイルへのパス。起動後はファイル変更を監視して reindex します |
 | `--system-dictionary` | なし | システム辞書ファイルへのパス。複数回指定でき、左に書いたものほど優先されます (同じ読み・同じ候補が複数の system 辞書に現れた場合は最初に指定された辞書由来として扱います) |
-| `--bind-address` | `127.0.0.1` | bind するネットワークアドレス (`0.0.0.0` で全インターフェース) |
-| `--port` | `1178` | listen ポート |
+| `--port` | `1178` | listen ポート (常に `127.0.0.1` にバインドします) |
 | `--incoming-charset` | `UTF-8` | クライアントが送ってくる文字コード (`UTF-8` または `EUC-JP`) |
 | `--max-candidates-per-reading` | `5` | 各読み片から使う候補数の上限 |
 | `--max-final-candidates` | `10` | 最終出力候補数の上限 |

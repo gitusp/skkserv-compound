@@ -14,6 +14,10 @@ use tracing::{info, warn};
 // broken client or an attempt to exhaust memory.
 const MAX_PENDING_BYTES: usize = 64 * 1024;
 
+// This is a personal, local dictionary backend, so we always bind to loopback
+// and report it back to clients (opcode `3`).
+const BIND_ADDRESS: &str = "127.0.0.1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncomingCharset {
     Utf8,
@@ -75,18 +79,11 @@ impl SkkServer {
         }
     }
 
-    pub async fn run(
-        self,
-        host: &str,
-        port: u16,
-        incoming_charset: IncomingCharset,
-    ) -> io::Result<()> {
-        // Pass `(host, port)` so ToSocketAddrs handles IPv6 literals without
-        // requiring the caller to bracket them.
-        let listener = TcpListener::bind((host, port)).await?;
+    pub async fn run(self, port: u16, incoming_charset: IncomingCharset) -> io::Result<()> {
+        let listener = TcpListener::bind((BIND_ADDRESS, port)).await?;
         info!(
             "Server started on {}:{} with incoming charset {}.",
-            host,
+            BIND_ADDRESS,
             port,
             incoming_charset.name()
         );
@@ -104,22 +101,15 @@ impl SkkServer {
                 }
             };
             let server = self.clone();
-            let host = host.to_string();
             tokio::spawn(async move {
-                if let Err(e) = handle_client(stream, server, host, port, incoming_charset).await {
+                if let Err(e) = handle_client(stream, server, port, incoming_charset).await {
                     warn!("client {} error: {}", peer, e);
                 }
             });
         }
     }
 
-    pub async fn handle_opcode(
-        &self,
-        opcode: char,
-        _operand: &str,
-        host: &str,
-        port: u16,
-    ) -> OpcodeResult {
+    pub async fn handle_opcode(&self, opcode: char, _operand: &str, port: u16) -> OpcodeResult {
         match opcode {
             '0' => OpcodeResult::Close,
             '1' => OpcodeResult::Reply(self.candidate_response(_operand).await),
@@ -128,12 +118,7 @@ impl SkkServer {
                 // Mirror Swift's `Host.current().localizedName ?? ""`, which on
                 // macOS returns the LocalHostName (no trailing `.local`).
                 let hostname = local_host_name();
-                OpcodeResult::Reply(format!(
-                    "{}/{}:{} ",
-                    hostname,
-                    format_host_for_reply(host),
-                    port
-                ))
+                OpcodeResult::Reply(format!("{}/{}:{} ", hostname, BIND_ADDRESS, port))
             }
             '4' => OpcodeResult::Reply("4\n".to_string()),
             other => {
@@ -177,19 +162,9 @@ fn sanitize_candidate_for_wire(text: &str) -> String {
         .collect()
 }
 
-fn format_host_for_reply(host: &str) -> String {
-    // Bracket bare IPv6 literals so clients can split host:port unambiguously.
-    if host.contains(':') && !host.starts_with('[') {
-        format!("[{}]", host)
-    } else {
-        host.to_string()
-    }
-}
-
 async fn handle_client(
     mut stream: TcpStream,
     server: SkkServer,
-    host: String,
     port: u16,
     charset: IncomingCharset,
 ) -> io::Result<()> {
@@ -212,7 +187,7 @@ async fn handle_client(
         }
         let requests = extract_messages(&mut pending, charset);
         for (opcode, operand) in requests {
-            match server.handle_opcode(opcode, &operand, &host, port).await {
+            match server.handle_opcode(opcode, &operand, port).await {
                 OpcodeResult::Close => break 'outer,
                 OpcodeResult::Ignore => continue,
                 OpcodeResult::Reply(body) => {

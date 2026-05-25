@@ -88,7 +88,7 @@ async fn opcode1_ascii_input_does_not_extract_okuri() {
 async fn opcode_zero_closes() {
     let server = make_server(&[], &[]);
     assert_eq!(
-        server.handle_opcode('0', "", "127.0.0.1", 1178).await,
+        server.handle_opcode('0', "", 1178).await,
         OpcodeResult::Close
     );
 }
@@ -102,7 +102,7 @@ async fn opcode_two_returns_version() {
         CompoundGeneratorConfig::default(),
     );
     assert_eq!(
-        server.handle_opcode('2', "", "127.0.0.1", 1178).await,
+        server.handle_opcode('2', "", 1178).await,
         OpcodeResult::Reply("skkserv-test/v1 ".to_string())
     );
 }
@@ -110,7 +110,7 @@ async fn opcode_two_returns_version() {
 #[tokio::test]
 async fn opcode_three_returns_host_port() {
     let server = make_server(&[], &[]);
-    let result = server.handle_opcode('3', "", "127.0.0.1", 1178).await;
+    let result = server.handle_opcode('3', "", 1178).await;
     match result {
         OpcodeResult::Reply(body) => assert!(body.ends_with("/127.0.0.1:1178 "), "got: {}", body),
         _ => panic!("expected reply"),
@@ -122,7 +122,7 @@ async fn opcode_four_returns_four() {
     let server = make_server(&[], &[]);
     assert_eq!(
         server
-            .handle_opcode('4', "なにか ", "127.0.0.1", 1178)
+            .handle_opcode('4', "なにか ", 1178)
             .await,
         OpcodeResult::Reply("4\n".to_string())
     );
@@ -132,7 +132,7 @@ async fn opcode_four_returns_four() {
 async fn opcode_one_integrates() {
     let server = make_server(&[], &[("あ", &["亜"]), ("い", &["胃"])]);
     assert_eq!(
-        server.handle_opcode('1', "あい ", "127.0.0.1", 1178).await,
+        server.handle_opcode('1', "あい ", 1178).await,
         OpcodeResult::Reply("1/亜胃/\n".to_string())
     );
 }
@@ -141,7 +141,7 @@ async fn opcode_one_integrates() {
 async fn unsupported_opcode_ignored() {
     let server = make_server(&[], &[]);
     assert_eq!(
-        server.handle_opcode('9', "", "127.0.0.1", 1178).await,
+        server.handle_opcode('9', "", 1178).await,
         OpcodeResult::Ignore
     );
 }
