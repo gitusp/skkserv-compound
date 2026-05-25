@@ -226,14 +226,10 @@ pub fn extract_messages(buffer: &mut Vec<u8>, charset: IncomingCharset) -> Vec<(
 }
 
 fn local_host_name() -> String {
-    let raw = hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .unwrap_or_default();
-    match raw.strip_suffix(".local") {
-        Some(stripped) => stripped.to_string(),
-        None => raw,
-    }
+    // skkserv-compound is a loopback-only personal backend; the hostname
+    // in the opcode-3 reply is informational only, so a fixed label is
+    // sufficient and avoids pulling a hostname-lookup dependency.
+    "localhost".to_string()
 }
 
 /// Normalize a raw skkserv yomi into a `(body, okuri_prefix)` pair. Trims
