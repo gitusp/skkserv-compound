@@ -162,7 +162,12 @@ fn does_not_bury_short_suffix_split() {
             ("ぞうか", &["増加", "造花"]),
         ],
     );
-    let out = generate("こうぞうか", &snap, CompoundGeneratorConfig::default(), None);
+    let out = generate(
+        "こうぞうか",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        None,
+    );
     assert_eq!(
         out,
         vec!["構造化", "項増加", "構造課", "項造花", "公増加", "公造花"]
@@ -185,7 +190,10 @@ fn combines_abbrev_katakana() {
         CompoundGeneratorConfig::default(),
         None,
     );
-    assert_eq!(out.first().map(String::as_str), Some("ダブルチーズバーガー"));
+    assert_eq!(
+        out.first().map(String::as_str),
+        Some("ダブルチーズバーガー")
+    );
 }
 
 #[test]

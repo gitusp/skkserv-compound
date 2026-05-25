@@ -166,7 +166,12 @@ pub fn generate(
     while k <= n && results.len() < config.max_final_candidates {
         let splits = enumerate_splits(&chars, n, k, snapshot, okuri_char);
         if !splits.is_empty() {
-            collect_for_k(&splits, config.max_final_candidates, &mut seen, &mut results);
+            collect_for_k(
+                &splits,
+                config.max_final_candidates,
+                &mut seen,
+                &mut results,
+            );
         }
         k += 1;
     }
@@ -189,7 +194,17 @@ fn enumerate_splits<'a>(
 ) -> Vec<Split<'a>> {
     let mut splits = Vec::new();
     let mut current: Vec<&'a [Candidate]> = Vec::with_capacity(k);
-    extend_split(chars, n, k, 0, 0, snapshot, okuri_char, &mut current, &mut splits);
+    extend_split(
+        chars,
+        n,
+        k,
+        0,
+        0,
+        snapshot,
+        okuri_char,
+        &mut current,
+        &mut splits,
+    );
     splits
 }
 
@@ -251,7 +266,17 @@ fn extend_split<'a>(
             continue;
         }
         current.push(cands);
-        extend_split(chars, n, k, depth + 1, next_start, snapshot, okuri_char, current, out);
+        extend_split(
+            chars,
+            n,
+            k,
+            depth + 1,
+            next_start,
+            snapshot,
+            okuri_char,
+            current,
+            out,
+        );
         current.pop();
     }
 }
@@ -278,7 +303,9 @@ fn collect_for_k(
     }
 
     while results.len() < cap {
-        let Some(Reverse(state)) = heap.pop() else { break };
+        let Some(Reverse(state)) = heap.pop() else {
+            break;
+        };
         let split = &splits[state.split_order];
 
         // Materialize this combination's output text lazily (only on pop).

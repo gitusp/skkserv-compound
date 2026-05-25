@@ -121,9 +121,7 @@ async fn opcode_three_returns_host_port() {
 async fn opcode_four_returns_four() {
     let server = make_server(&[], &[]);
     assert_eq!(
-        server
-            .handle_opcode('4', "なにか ", 1178)
-            .await,
+        server.handle_opcode('4', "なにか ", 1178).await,
         OpcodeResult::Reply("4\n".to_string())
     );
 }

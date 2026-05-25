@@ -34,10 +34,7 @@ fn snap_nashi(system: &[(&str, &[&str])]) -> DictionarySnapshot {
     build_snapshot(&[], &s)
 }
 
-fn snap_okuri(
-    system: &[(&str, &[&str])],
-    okuri_system: &[(&str, &[&str])],
-) -> DictionarySnapshot {
+fn snap_okuri(system: &[(&str, &[&str])], okuri_system: &[(&str, &[&str])]) -> DictionarySnapshot {
     let mut s: Vec<ParsedEntry> = system.iter().map(|(r, c)| nashi(r, c)).collect();
     s.extend(okuri_system.iter().map(|(r, c)| ari(r, c)));
     build_snapshot(&[], &s)
@@ -52,7 +49,10 @@ fn run_all() -> Vec<(&'static str, Vec<String>)> {
             "A_one_sided_sweep_right",
             generate(
                 "あい",
-                &snap_nashi(&[("あ", &["X"]), ("い", &["A", "B", "C", "D", "E", "F", "G", "H"])]),
+                &snap_nashi(&[
+                    ("あ", &["X"]),
+                    ("い", &["A", "B", "C", "D", "E", "F", "G", "H"]),
+                ]),
                 CompoundGeneratorConfig::default(),
                 None,
             ),
@@ -154,10 +154,7 @@ fn run_all() -> Vec<(&'static str, Vec<String>)> {
             "H_final_cap_6_both_sides",
             generate(
                 "あい",
-                &snap_nashi(&[
-                    ("あ", &["a0", "a1", "a2"]),
-                    ("い", &["b0", "b1", "b2"]),
-                ]),
+                &snap_nashi(&[("あ", &["a0", "a1", "a2"]), ("い", &["b0", "b1", "b2"])]),
                 CompoundGeneratorConfig::new(6),
                 None,
             ),
