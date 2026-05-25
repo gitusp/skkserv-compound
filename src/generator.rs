@@ -1,34 +1,140 @@
 // SPDX-License-Identifier: MIT
 
+//! Compound-candidate generation.
+//!
+//! Given a `yomi` reading, this module enumerates *compound* candidates: a
+//! compound is built by partitioning the **entire** yomi into `k >= 2`
+//! contiguous parts, where each part is a dictionary reading key. Picking one
+//! candidate string per part and concatenating them (in part order) yields one
+//! output text. (`k = 1`, i.e. a single whole-word match, is left to the SKK
+//! client's own dictionary lookup and is never produced here.)
+//!
+//! # Ordering (best-first)
+//!
+//! Results are emitted under a strict total order:
+//!
+//! 1. **Primary — `k` ascending.** Every `k = 2` result precedes every
+//!    `k = 3` result, and so on. As an optimization we only advance to `k + 1`
+//!    while fewer than `max_final_candidates` distinct texts have been
+//!    collected; once a smaller `k` fills the cap, larger `k` is never
+//!    enumerated.
+//!
+//! 2. **Within a fixed `k`,** across all valid splits and all their
+//!    combinations:
+//!    - `rank` = the **sum of the chosen candidate indices**, ascending. A
+//!      candidate index is its position in that part's candidate slice
+//!      (`0` = top priority). This is a *balanced / diagonal* enumeration: a
+//!      second choice on any single part (rank 1) always outranks a deep choice
+//!      concentrated on one part (rank >= 2). There is deliberately no
+//!      length/balance/semantic heuristic — ordering beyond fewer-parts-first
+//!      is left to dictionary order and user-dictionary learning.
+//!    - **Tiebreak 1** (equal rank): split enumeration order, ascending. Splits
+//!      enumerate by extending part boundaries left-to-right in the order
+//!      `prefix_matches` / `okuri_ari_prefix_matches` return readings (i.e.
+//!      dictionary registration order).
+//!    - **Tiebreak 2** (equal rank *and* same split): the index tuple compared
+//!      lexicographically, ascending. (Disambiguates e.g. (0,2) vs (1,1) vs
+//!      (2,0), which all share rank 2.)
+//!
+//! 3. **Dedup by output text** across the whole run: a text already emitted by
+//!    any earlier split or `k` is skipped. Collection stops at
+//!    `max_final_candidates` distinct texts.
+//!
+//! # Algorithm
+//!
+//! For a fixed `k` we run a lazy best-first walk over combinations using a
+//! binary min-heap (`BinaryHeap<Reverse<State>>`). Each split is seeded with its
+//! all-zero index tuple. Each pop yields the globally smallest unexpanded state
+//! under the `(rank, split order, index tuple)` key; we then push its
+//! successors — the tuple with exactly one index position bumped by one. A tuple
+//! is reachable by bumping different positions, so to generate each exactly once
+//! every state only bumps positions at or after a recorded `frontier` index
+//! (bumping position `p` sets the successor's frontier to `p`). This is the
+//! standard lazy "k-smallest sums" enumeration: it never materializes the full
+//! cartesian product and stops the instant the cap is met.
+
 use crate::dictionary::Candidate;
 use crate::snapshot::DictionarySnapshot;
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashSet};
 
 #[derive(Debug, Clone, Copy)]
 pub struct CompoundGeneratorConfig {
-    pub max_candidates_per_reading: usize,
     pub max_final_candidates: usize,
 }
 
 impl Default for CompoundGeneratorConfig {
     fn default() -> Self {
         Self {
-            max_candidates_per_reading: 5,
             max_final_candidates: 10,
         }
     }
 }
 
 impl CompoundGeneratorConfig {
-    pub fn new(max_candidates_per_reading: usize, max_final_candidates: usize) -> Self {
+    pub fn new(max_final_candidates: usize) -> Self {
         Self {
-            max_candidates_per_reading,
             max_final_candidates,
         }
     }
 }
 
+/// A valid split of the whole yomi into `k` parts, in part order. Each part is
+/// a borrowed slice of the snapshot's candidates for that part's reading key
+/// (registration order, index 0 = top priority); nothing is cloned.
+struct Split<'a> {
+    parts: Vec<&'a [Candidate]>,
+}
+
+/// A point in the per-`k` lazy enumeration: one candidate index per part.
+struct State {
+    /// Sum of `indices` — the rank.
+    rank: usize,
+    /// Which split this combination belongs to (enumeration order).
+    split_order: usize,
+    /// Chosen candidate index per part.
+    indices: Vec<usize>,
+    /// Successors only bump positions `>= frontier`, preventing duplicates.
+    frontier: usize,
+}
+
+impl State {
+    fn ordering_key(&self) -> (usize, usize, &[usize]) {
+        (self.rank, self.split_order, self.indices.as_slice())
+    }
+}
+
+impl PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.ordering_key() == other.ordering_key()
+    }
+}
+
+impl Eq for State {}
+
+impl PartialOrd for State {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for State {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // (rank, split order, index tuple) all ascending => "smaller" is better.
+        // The heap is a max-heap, so callers wrap states in `Reverse`.
+        let (ar, ao, ai) = self.ordering_key();
+        let (br, bo, bi) = other.ordering_key();
+        ar.cmp(&br).then(ao.cmp(&bo)).then(ai.cmp(bi))
+    }
+}
+
+/// Generate compound candidates for `yomi`, best-first, capped at
+/// `config.max_final_candidates` distinct output texts.
+///
+/// `okuri_prefix`: when `Some`, every split's last part must be an okuri-ari
+/// key whose hiragana stem ends exactly at the end of the yomi, and whose
+/// trailing ASCII letter equals the first char of `okuri_prefix`; all other
+/// parts are okuri-nashi. When `None`, every part is okuri-nashi.
 pub fn generate(
     yomi: &str,
     snapshot: &DictionarySnapshot,
@@ -40,264 +146,169 @@ pub fn generate(
     // A compound by definition requires at least two reading parts. The same
     // floor applies in okuri-ari mode: at least one okuri-nashi prefix part
     // plus one okuri-ari stem part.
-    if n < 2 {
+    if n < 2 || config.max_final_candidates == 0 {
         return Vec::new();
     }
 
     // okuri-ari mode is opted into when the SKK request carried a trailing
     // okurigana romaji marker (e.g. `もんだいなs` → body `もんだいな` + `s`).
     // The marker drives the dictionary bucket used for the last split part.
-    let okuri_char: Option<char> = okuri_prefix.and_then(|s| s.chars().next());
+    let okuri_char = okuri_prefix.and_then(|s| s.chars().next());
 
+    let mut results: Vec<String> = Vec::with_capacity(config.max_final_candidates);
     let mut seen: HashSet<String> = HashSet::new();
-    let mut result: Vec<String> = Vec::with_capacity(config.max_final_candidates);
 
-    // The outer best-first axis is k, the number of reading parts. k = 1 is
-    // intentionally skipped: single-word exact matches are returned by the SKK
-    // client's own dictionary lookup, not by this compound server. We expand k
-    // upward only while the dedupe'd output is still short of the final cap, so
-    // larger k stages are never enumerated when smaller k already fills the cap.
-    let mut k = 2usize;
-    while k <= n && result.len() < config.max_final_candidates {
-        let splits = enumerate_splits(
-            k,
-            &chars,
-            snapshot,
-            config.max_candidates_per_reading,
-            okuri_char,
-        );
+    // Primary axis: ascending k (number of parts). k = 1 is skipped. The
+    // largest possible k is n (every part one char). Advance only while the
+    // dedupe'd output is still short of the cap, so larger k is never
+    // enumerated once a smaller k already fills it.
+    let mut k = 2;
+    while k <= n && results.len() < config.max_final_candidates {
+        let splits = enumerate_splits(&chars, n, k, snapshot, okuri_char);
         if !splits.is_empty() {
-            expand(splits, config.max_final_candidates, &mut seen, &mut result);
+            collect_for_k(&splits, config.max_final_candidates, &mut seen, &mut results);
         }
         k += 1;
     }
 
-    result
+    results
 }
 
-#[derive(Debug, Clone)]
-struct SplitInfo {
-    part_candidates: Vec<Vec<Candidate>>,
-    num_parts: usize,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct PqEntry {
-    split_idx: usize,
-    rank: usize,
-    indices: Vec<usize>,
-    text: String,
-}
-
-// BinaryHeap is a max-heap, but the pop order we want is (rank ASC, split_idx
-// ASC): a round-robin across every split of the current k — all splits' rank-0
-// combination first, then all rank-1, and so on — with split_idx (which equals
-// enumeration order, i.e. dictionary registration order) as the deterministic
-// tiebreak within a rank. There is deliberately no length/balance heuristic:
-// per the project's "no semantic judgement" stance, ordering beyond
-// fewer-parts-first is left to dictionary order and user-dictionary learning.
-// So an entry is "greater" (popped first) when its rank is smaller, or on equal
-// rank when its split_idx is smaller.
-impl Ord for PqEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.rank.cmp(&other.rank) {
-            Ordering::Equal => self.split_idx.cmp(&other.split_idx).reverse(),
-            ord => ord.reverse(), // smaller rank => greater => popped first
-        }
-    }
-}
-
-impl PartialOrd for PqEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-fn expand(
-    splits: Vec<SplitInfo>,
-    final_cap: usize,
-    seen: &mut HashSet<String>,
-    result: &mut Vec<String>,
-) {
-    // `splits` arrives in enumeration order (dictionary registration order); the
-    // index into it is used directly as split_idx, the heap's only tiebreak.
-    let mut heap: BinaryHeap<PqEntry> = BinaryHeap::new();
-    for (idx, info) in splits.iter().enumerate() {
-        let indices = vec![0usize; info.num_parts];
-        let text = build_text(info, &indices);
-        heap.push(PqEntry {
-            split_idx: idx,
-            rank: 0,
-            indices,
-            text,
-        });
-    }
-
-    while result.len() < final_cap {
-        let Some(entry) = heap.pop() else { break };
-        if seen.insert(entry.text.clone()) {
-            result.push(entry.text.clone());
-            if result.len() >= final_cap {
-                return;
-            }
-        }
-        // Push the next combination within this split, in lex order with the
-        // rightmost index varying fastest. rank increments by one so this
-        // entry queues behind every other split's same-rank candidate.
-        let info = &splits[entry.split_idx];
-        let mut next = entry.indices.clone();
-        let mut i: isize = info.num_parts as isize - 1;
-        let mut wrapped_all = true;
-        while i >= 0 {
-            next[i as usize] += 1;
-            if next[i as usize] < info.part_candidates[i as usize].len() {
-                wrapped_all = false;
-                break;
-            }
-            next[i as usize] = 0;
-            i -= 1;
-        }
-        if !wrapped_all {
-            let text = build_text(info, &next);
-            heap.push(PqEntry {
-                split_idx: entry.split_idx,
-                rank: entry.rank + 1,
-                indices: next,
-                text,
-            });
-        }
-    }
-}
-
-fn enumerate_splits(
-    k: usize,
+/// Enumerate every valid split of the whole yomi into exactly `k` parts.
+///
+/// Boundaries are chosen left-to-right in the order `prefix_matches` /
+/// `okuri_ari_prefix_matches` return readings, which fixes the split
+/// enumeration order used as Tiebreak 1. A split is kept only if it tiles the
+/// whole yomi and every part has at least one candidate.
+fn enumerate_splits<'a>(
     chars: &[char],
-    snapshot: &DictionarySnapshot,
-    cap: usize,
-    okuri_prefix: Option<char>,
-) -> Vec<SplitInfo> {
-    let mut splits: Vec<SplitInfo> = Vec::new();
-    let mut parts: Vec<String> = Vec::with_capacity(k);
-    enumerate_recursive(
-        k,
-        0,
-        0,
-        chars,
-        snapshot,
-        cap,
-        okuri_prefix,
-        &mut parts,
-        &mut splits,
-    );
+    n: usize,
+    k: usize,
+    snapshot: &'a DictionarySnapshot,
+    okuri_char: Option<char>,
+) -> Vec<Split<'a>> {
+    let mut splits = Vec::new();
+    let mut current: Vec<&'a [Candidate]> = Vec::with_capacity(k);
+    extend_split(chars, n, k, 0, 0, snapshot, okuri_char, &mut current, &mut splits);
     splits
 }
 
+/// Recursive depth-first split builder. `depth` parts have been fixed so far;
+/// the next part starts at `start`. Readings are pushed in dictionary-returned
+/// order, so the split list is deterministic and matches Tiebreak 1.
 #[allow(clippy::too_many_arguments)]
-fn enumerate_recursive(
+fn extend_split<'a>(
+    chars: &[char],
+    n: usize,
     k: usize,
     depth: usize,
     start: usize,
-    chars: &[char],
-    snapshot: &DictionarySnapshot,
-    cap: usize,
-    okuri_prefix: Option<char>,
-    parts: &mut Vec<String>,
-    splits: &mut Vec<SplitInfo>,
+    snapshot: &'a DictionarySnapshot,
+    okuri_char: Option<char>,
+    current: &mut Vec<&'a [Candidate]>,
+    out: &mut Vec<Split<'a>>,
 ) {
-    let n = chars.len();
-    if depth == k {
-        if start == n
-            && let Some(info) = make_split(parts, snapshot, cap, okuri_prefix.is_some())
-        {
-            splits.push(info);
-        }
-        return;
-    }
-    // Each remaining part needs at least one character of yomi left.
-    let remaining_parts = k - depth;
-    if (n - start) < remaining_parts {
-        return;
-    }
+    let is_last = depth + 1 == k;
 
-    // Only the final part may consume the okuri-ari bucket; intermediate parts
-    // must come from the okuri-nashi bucket per spec.
-    let is_last = depth == k - 1;
-    let matches = if is_last {
-        match okuri_prefix {
-            Some(op) => snapshot.okuri_ari_prefix_matches(chars, start, op),
+    if is_last {
+        // The last part must consume exactly the remainder of the yomi. Only
+        // this part may draw from the okuri-ari bucket; the matches are already
+        // in dictionary-returned order (Tiebreak 1).
+        let matches = match okuri_char {
+            Some(c) => snapshot.okuri_ari_prefix_matches(chars, start, c),
             None => snapshot.prefix_matches(chars, start),
-        }
-    } else {
-        snapshot.prefix_matches(chars, start)
-    };
-
-    for m in matches {
-        let next_start = start + m.length;
-        if is_last {
-            // The final part must consume the entire body. (For okuri-nashi
-            // mode the depth == k terminal check also enforces this, but
-            // making it explicit keeps the okuri-ari branch tidy.)
-            if next_start != n {
+        };
+        for m in matches {
+            if start + m.length != n {
                 continue;
             }
-        } else if (n - next_start) < (remaining_parts - 1) {
+            let cands = match okuri_char {
+                Some(_) => snapshot.okuri_ari_candidates(&m.reading),
+                None => snapshot.candidates(&m.reading),
+            };
+            if cands.is_empty() {
+                continue;
+            }
+            current.push(cands);
+            out.push(Split {
+                parts: current.clone(),
+            });
+            current.pop();
+        }
+        return;
+    }
+
+    // Non-last parts are always okuri-nashi and must leave at least one char
+    // for each of the remaining (k - depth - 1) parts.
+    let remaining_parts_after = k - depth - 1;
+    for m in snapshot.prefix_matches(chars, start) {
+        let next_start = start + m.length;
+        if next_start >= n || n - next_start < remaining_parts_after {
             continue;
         }
-        parts.push(m.reading);
-        enumerate_recursive(
-            k,
-            depth + 1,
-            next_start,
-            chars,
-            snapshot,
-            cap,
-            okuri_prefix,
-            parts,
-            splits,
-        );
-        parts.pop();
+        let cands = snapshot.candidates(&m.reading);
+        if cands.is_empty() {
+            continue;
+        }
+        current.push(cands);
+        extend_split(chars, n, k, depth + 1, next_start, snapshot, okuri_char, current, out);
+        current.pop();
     }
 }
 
-fn make_split(
-    parts: &[String],
-    snapshot: &DictionarySnapshot,
+/// Within a fixed `k`, lazily enumerate combinations across all `splits` in the
+/// required total order and append distinct output texts to `results` until the
+/// cap is hit.
+fn collect_for_k(
+    splits: &[Split<'_>],
     cap: usize,
-    last_is_okuri_ari: bool,
-) -> Option<SplitInfo> {
-    if parts.is_empty() {
-        return None;
-    }
-    let mut part_candidates: Vec<Vec<Candidate>> = Vec::with_capacity(parts.len());
-    for (i, reading) in parts.iter().enumerate() {
-        // For okuri-ari mode the last part is keyed in the okuri-ari bucket
-        // (e.g. `なs`); every other part comes from the okuri-nashi bucket.
-        let is_last_okuri_ari = last_is_okuri_ari && (i == parts.len() - 1);
-        let all = if is_last_okuri_ari {
-            snapshot.okuri_ari_candidates(reading)
-        } else {
-            snapshot.candidates(reading)
-        };
-        let taken: Vec<Candidate> = if all.len() <= cap {
-            all.to_vec()
-        } else {
-            all[..cap].to_vec()
-        };
-        part_candidates.push(taken);
-    }
-    if part_candidates.iter().any(|c| c.is_empty()) {
-        return None;
-    }
-    Some(SplitInfo {
-        part_candidates,
-        num_parts: parts.len(),
-    })
-}
+    seen: &mut HashSet<String>,
+    results: &mut Vec<String>,
+) {
+    let mut heap: BinaryHeap<Reverse<State>> = BinaryHeap::new();
 
-fn build_text(info: &SplitInfo, indices: &[usize]) -> String {
-    let mut s = String::new();
-    for (part_idx, &cand_idx) in indices.iter().enumerate() {
-        s.push_str(&info.part_candidates[part_idx][cand_idx].text);
+    // Seed each split with its all-zero (top-of-each-part) combination.
+    for (split_order, split) in splits.iter().enumerate() {
+        heap.push(Reverse(State {
+            rank: 0,
+            split_order,
+            indices: vec![0; split.parts.len()],
+            frontier: 0,
+        }));
     }
-    s
+
+    while results.len() < cap {
+        let Some(Reverse(state)) = heap.pop() else { break };
+        let split = &splits[state.split_order];
+
+        // Materialize this combination's output text lazily (only on pop).
+        let mut text = String::new();
+        for (part, &idx) in split.parts.iter().zip(state.indices.iter()) {
+            text.push_str(&part[idx].text);
+        }
+        if seen.insert(text.clone()) {
+            results.push(text);
+            if results.len() >= cap {
+                return;
+            }
+        }
+
+        // Push successors: bump exactly one index at or after the frontier.
+        // Bumping position `p` advances the successor's frontier to `p`, so each
+        // reachable tuple is enqueued exactly once.
+        for p in state.frontier..split.parts.len() {
+            let next = state.indices[p] + 1;
+            if next >= split.parts[p].len() {
+                continue;
+            }
+            let mut indices = state.indices.clone();
+            indices[p] = next;
+            heap.push(Reverse(State {
+                rank: state.rank + 1,
+                split_order: state.split_order,
+                indices,
+                frontier: p,
+            }));
+        }
+    }
 }

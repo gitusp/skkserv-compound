@@ -117,24 +117,6 @@ fn allows_short_readings() {
 }
 
 #[test]
-fn respects_per_reading_cap() {
-    let snap = snapshot(
-        &[],
-        &[
-            ("たん", &["1", "2", "3", "4", "5", "6", "7"]),
-            ("じゅん", &["A"]),
-        ],
-    );
-    let out = generate(
-        "たんじゅん",
-        &snap,
-        CompoundGeneratorConfig::new(3, 100),
-        None,
-    );
-    assert_eq!(out, vec!["1A", "2A", "3A"]);
-}
-
-#[test]
 fn respects_final_cap() {
     let snap = snapshot(
         &[],
@@ -143,12 +125,7 @@ fn respects_final_cap() {
             ("じゅん", &["A", "B", "C", "D", "E"]),
         ],
     );
-    let out = generate(
-        "たんじゅん",
-        &snap,
-        CompoundGeneratorConfig::new(5, 4),
-        None,
-    );
+    let out = generate("たんじゅん", &snap, CompoundGeneratorConfig::new(4), None);
     assert_eq!(out.len(), 4);
 }
 
@@ -247,7 +224,7 @@ fn best_first_small_cap_stays_on_top_split() {
     let out = generate(
         "せいそうぎょうしゃ",
         &snap,
-        CompoundGeneratorConfig::new(5, 2),
+        CompoundGeneratorConfig::new(2),
         None,
     );
     assert_eq!(out, vec!["清掃業者", "整層業者"]);
@@ -268,7 +245,7 @@ fn best_first_retreats_to_lower_split_when_needed() {
     let out = generate(
         "せいそうぎょうしゃ",
         &snap,
-        CompoundGeneratorConfig::new(5, 3),
+        CompoundGeneratorConfig::new(3),
         None,
     );
     assert_eq!(out, vec!["清掃業者", "清層業者", "整掃業者"]);
@@ -285,7 +262,7 @@ fn skips_higher_k_once_final_cap_filled() {
             ("い", &["I_X"]),
         ],
     );
-    let out = generate("あいうえ", &snap, CompoundGeneratorConfig::new(5, 1), None);
+    let out = generate("あいうえ", &snap, CompoundGeneratorConfig::new(1), None);
     assert_eq!(out, vec!["AIUE"]);
     assert!(!out.iter().any(|s| s == "A_XI_XUE"));
 }
@@ -410,23 +387,6 @@ fn okuri_prefix_nil_falls_back_to_okuri_nashi() {
         None,
     );
     assert_eq!(out, vec!["問題菜".to_string()]);
-}
-
-#[test]
-fn okuri_ari_respects_per_reading_cap() {
-    let snap = okuri_snapshot(
-        &[],
-        &[("もんだい", &["問題"])],
-        &[],
-        &[("なs", &["A", "B", "C", "D", "E"])],
-    );
-    let out = generate(
-        "もんだいな",
-        &snap,
-        CompoundGeneratorConfig::new(2, 100),
-        Some("s"),
-    );
-    assert_eq!(out, vec!["問題A", "問題B"]);
 }
 
 #[test]

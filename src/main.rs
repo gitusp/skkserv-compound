@@ -34,10 +34,6 @@ struct Args {
     #[arg(long = "system-dictionary")]
     system_dictionaries: Vec<String>,
 
-    /// Maximum number of candidates pulled from each reading part.
-    #[arg(long, default_value_t = 5)]
-    max_candidates_per_reading: usize,
-
     /// Maximum number of final compound candidates returned.
     #[arg(long, default_value_t = 10)]
     max_final_candidates: usize,
@@ -120,7 +116,7 @@ fn main() -> ExitCode {
         skkserv_compound::VERSION,
         "skkserv-compound",
         store,
-        CompoundGeneratorConfig::new(args.max_candidates_per_reading, args.max_final_candidates),
+        CompoundGeneratorConfig::new(args.max_final_candidates),
     );
 
     let port = args.port;
