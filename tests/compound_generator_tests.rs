@@ -197,18 +197,18 @@ fn combines_abbrev_katakana() {
     let snap = snapshot(
         &[],
         &[
-            ("mini", &["ミニ"]),
-            ("catalog", &["カタログ"]),
-            ("gift", &["ギフト"]),
+            ("double", &["ダブル"]),
+            ("cheese", &["チーズ"]),
+            ("burger", &["バーガー"]),
         ],
     );
     let out = generate(
-        "minicataloggift",
+        "doublecheeseburger",
         &snap,
         CompoundGeneratorConfig::default(),
         None,
     );
-    assert_eq!(out.first().map(String::as_str), Some("ミニカタログギフト"));
+    assert_eq!(out.first().map(String::as_str), Some("ダブルチーズバーガー"));
 }
 
 #[test]
@@ -295,21 +295,21 @@ fn combines_four_part_abbrev() {
     let snap = snapshot(
         &[],
         &[
-            ("mini", &["ミニ"]),
-            ("catalog", &["カタログ"]),
-            ("gift", &["ギフト"]),
+            ("double", &["ダブル"]),
+            ("cheese", &["チーズ"]),
+            ("burger", &["バーガー"]),
             ("set", &["セット"]),
         ],
     );
     let out = generate(
-        "minicataloggiftset",
+        "doublecheeseburgerset",
         &snap,
         CompoundGeneratorConfig::default(),
         None,
     );
     assert_eq!(
         out.first().map(String::as_str),
-        Some("ミニカタログギフトセット")
+        Some("ダブルチーズバーガーセット")
     );
 }
 
