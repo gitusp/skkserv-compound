@@ -165,14 +165,12 @@ pub fn generate(
     let mut k = 2;
     while k <= n && results.len() < config.max_final_candidates {
         let splits = enumerate_splits(&chars, n, k, snapshot, okuri_char);
-        if !splits.is_empty() {
-            collect_for_k(
-                &splits,
-                config.max_final_candidates,
-                &mut seen,
-                &mut results,
-            );
-        }
+        collect_for_k(
+            &splits,
+            config.max_final_candidates,
+            &mut seen,
+            &mut results,
+        );
         k += 1;
     }
 

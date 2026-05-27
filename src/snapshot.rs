@@ -213,11 +213,8 @@ fn collect_okuri_ari_prefix_matches(
             continue;
         }
         let total_len = reading.chars().count();
-        if total_len == 0 {
-            continue;
-        }
         let stem_length = total_len - 1;
-        if stem_length < 1 || stem_length > remaining {
+        if stem_length > remaining {
             continue;
         }
         if matches_prefix(reading.chars().take(stem_length), chars, start) {
