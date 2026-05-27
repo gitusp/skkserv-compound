@@ -3,6 +3,11 @@
 use crate::dictionary::ParsedEntry;
 use std::collections::HashSet;
 
+/// True if `c` is in the SKK okuri-ari stem hiragana range (U+3041..=U+3096).
+fn is_hiragana(c: char) -> bool {
+    ('\u{3041}'..='\u{3096}').contains(&c)
+}
+
 pub fn parse(source: &str) -> Vec<ParsedEntry> {
     let mut result = Vec::new();
     for line in source.lines() {
@@ -61,10 +66,7 @@ pub fn parse_line(raw: &str) -> Option<ParsedEntry> {
             // legitimately starts with `[` followed by anything else (e.g.
             // `[英語]亜`) must not be swallowed.
             if let Some(rest) = text.strip_prefix('[')
-                && rest
-                    .chars()
-                    .next()
-                    .is_some_and(|c| (0x3041..=0x3096).contains(&(c as u32)))
+                && rest.chars().next().is_some_and(is_hiragana)
             {
                 in_okuri_block = true;
                 continue;
@@ -98,8 +100,7 @@ pub fn trailing_okuri(text: &str) -> Option<char> {
         return None;
     }
     let before = iter.next()?;
-    let u = before as u32;
-    if (0x3041..=0x3096).contains(&u) {
+    if is_hiragana(before) {
         Some(last)
     } else {
         None
