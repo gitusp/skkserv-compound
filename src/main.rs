@@ -34,7 +34,7 @@ struct Args {
     system_dictionaries: Vec<String>,
 
     /// Maximum number of final compound candidates returned.
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = CompoundGeneratorConfig::DEFAULT_MAX_FINAL_CANDIDATES)]
     max_final_candidates: usize,
 
     /// Log level (trace|debug|info|notice|warning|error|critical).

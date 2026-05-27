@@ -66,12 +66,14 @@ pub struct CompoundGeneratorConfig {
 impl Default for CompoundGeneratorConfig {
     fn default() -> Self {
         Self {
-            max_final_candidates: 10,
+            max_final_candidates: Self::DEFAULT_MAX_FINAL_CANDIDATES,
         }
     }
 }
 
 impl CompoundGeneratorConfig {
+    pub const DEFAULT_MAX_FINAL_CANDIDATES: usize = 10;
+
     pub fn new(max_final_candidates: usize) -> Self {
         Self {
             max_final_candidates,
