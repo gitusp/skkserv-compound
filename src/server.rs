@@ -109,10 +109,10 @@ impl SkkServer {
         }
     }
 
-    pub async fn handle_opcode(&self, opcode: char, _operand: &str, port: u16) -> OpcodeResult {
+    pub async fn handle_opcode(&self, opcode: char, operand: &str, port: u16) -> OpcodeResult {
         match opcode {
             '0' => OpcodeResult::Close,
-            '1' => OpcodeResult::Reply(self.candidate_response(_operand).await),
+            '1' => OpcodeResult::Reply(self.candidate_response(operand).await),
             '2' => OpcodeResult::Reply(format!("{}/{} ", self.server_name, self.version)),
             '3' => {
                 // Mirror Swift's `Host.current().localizedName ?? ""`, which on
