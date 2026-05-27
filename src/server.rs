@@ -18,6 +18,11 @@ const MAX_PENDING_BYTES: usize = 64 * 1024;
 // and report it back to clients (opcode `3`).
 const BIND_ADDRESS: &str = "127.0.0.1";
 
+// skkserv-compound is a loopback-only personal backend; the hostname in the
+// opcode-3 reply is informational only, so a fixed label is sufficient and
+// avoids pulling a hostname-lookup dependency.
+const LOCAL_HOST_NAME: &str = "localhost";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncomingCharset {
     Utf8,
@@ -117,8 +122,7 @@ impl SkkServer {
             '3' => {
                 // Mirror Swift's `Host.current().localizedName ?? ""`, which on
                 // macOS returns the LocalHostName (no trailing `.local`).
-                let hostname = local_host_name();
-                OpcodeResult::Reply(format!("{}/{}:{} ", hostname, BIND_ADDRESS, port))
+                OpcodeResult::Reply(format!("{}/{}:{} ", LOCAL_HOST_NAME, BIND_ADDRESS, port))
             }
             '4' => OpcodeResult::Reply("4\n".to_string()),
             other => {
@@ -223,13 +227,6 @@ pub fn extract_messages(buffer: &mut Vec<u8>, charset: IncomingCharset) -> Vec<(
         }
     }
     results
-}
-
-fn local_host_name() -> String {
-    // skkserv-compound is a loopback-only personal backend; the hostname
-    // in the opcode-3 reply is informational only, so a fixed label is
-    // sufficient and avoids pulling a hostname-lookup dependency.
-    "localhost".to_string()
 }
 
 /// Normalize a raw skkserv yomi into a `(body, okuri_prefix)` pair. Trims
