@@ -67,7 +67,7 @@ impl Layer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DictionarySnapshot {
     /// Readings the user dictionary contributes, each already merged with the
     /// system tier (user-first, deduped). Rebuilt on every user-dict change.
