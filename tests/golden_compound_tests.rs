@@ -145,7 +145,7 @@ fn run_all() -> Vec<(&'static str, Vec<String>)> {
                     &[("なs", &["無", "済", "為", "成", "鳴", "生"])],
                 ),
                 CompoundGeneratorConfig::default(),
-                Some("s"),
+                Some('s'),
             ),
         ),
         // H. Explicit small final cap with both-sides homophones: shows which

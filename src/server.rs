@@ -138,12 +138,7 @@ impl SkkServer {
             return "4\n".to_string();
         }
         let snapshot = self.store.current();
-        let candidates = generate(
-            &body,
-            &snapshot,
-            self.generator_config,
-            okuri_prefix.as_deref(),
-        );
+        let candidates = generate(&body, &snapshot, self.generator_config, okuri_prefix);
         // Drop characters that would corrupt the SKK wire framing (`/` is the
         // separator, `\n` terminates the reply) or break line-oriented
         // clients (`\r`, NUL). Resulting empty candidates are filtered out.
@@ -232,7 +227,7 @@ pub fn extract_messages(buffer: &mut Vec<u8>, charset: IncomingCharset) -> Vec<(
 /// Normalize a raw skkserv yomi into a `(body, okuri_prefix)` pair. Trims
 /// whitespace, lifts a trailing `<hiragana><a-z>` letter into `okuri_prefix`,
 /// and passes all-ASCII (abbrev) inputs through verbatim.
-pub fn sanitize_yomi(yomi: &str) -> (String, Option<String>) {
+pub fn sanitize_yomi(yomi: &str) -> (String, Option<char>) {
     let trimmed = yomi.trim();
     if trimmed.is_empty() {
         return (String::new(), None);
@@ -245,7 +240,7 @@ pub fn sanitize_yomi(yomi: &str) -> (String, Option<String>) {
         let mut chars: Vec<char> = trimmed.chars().collect();
         chars.pop();
         let body: String = chars.into_iter().collect();
-        return (body, Some(okuri.to_string()));
+        return (body, Some(okuri));
     }
     (trimmed.to_string(), None)
 }

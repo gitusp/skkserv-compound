@@ -242,11 +242,11 @@ fn sanitize_trims_and_strips() {
 fn sanitize_extracts_okuri_prefix() {
     let (body, okuri) = sanitize_yomi("おくr");
     assert_eq!(body, "おく");
-    assert_eq!(okuri, Some("r".to_string()));
+    assert_eq!(okuri, Some('r'));
 
     let (body, okuri) = sanitize_yomi("もんだいなs ");
     assert_eq!(body, "もんだいな");
-    assert_eq!(okuri, Some("s".to_string()));
+    assert_eq!(okuri, Some('s'));
 }
 
 #[test]

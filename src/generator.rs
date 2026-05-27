@@ -131,15 +131,15 @@ impl Ord for State {
 /// Generate compound candidates for `yomi`, best-first, capped at
 /// `config.max_final_candidates` distinct output texts.
 ///
-/// `okuri_prefix`: when `Some`, every split's last part must be an okuri-ari
+/// `okuri_char`: when `Some`, every split's last part must be an okuri-ari
 /// key whose hiragana stem ends exactly at the end of the yomi, and whose
-/// trailing ASCII letter equals the first char of `okuri_prefix`; all other
-/// parts are okuri-nashi. When `None`, every part is okuri-nashi.
+/// trailing ASCII letter equals `okuri_char`; all other parts are
+/// okuri-nashi. When `None`, every part is okuri-nashi.
 pub fn generate(
     yomi: &str,
     snapshot: &DictionarySnapshot,
     config: CompoundGeneratorConfig,
-    okuri_prefix: Option<&str>,
+    okuri_char: Option<char>,
 ) -> Vec<String> {
     let chars: Vec<char> = yomi.chars().collect();
     let n = chars.len();
@@ -153,8 +153,6 @@ pub fn generate(
     // okuri-ari mode is opted into when the SKK request carried a trailing
     // okurigana romaji marker (e.g. `もんだいなs` → body `もんだいな` + `s`).
     // The marker drives the dictionary bucket used for the last split part.
-    let okuri_char = okuri_prefix.and_then(|s| s.chars().next());
-
     let mut results: Vec<String> = Vec::with_capacity(config.max_final_candidates);
     let mut seen: HashSet<String> = HashSet::new();
 
