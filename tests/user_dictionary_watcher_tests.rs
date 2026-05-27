@@ -166,8 +166,13 @@ async fn handles_atomic_rename() {
     watcher.stop();
 }
 
+/// Observes store updates by fingerprinting a fixed set of watched readings
+/// through the public `candidates` query path. The caller passes every reading
+/// the test will touch (including ones not present yet — they read back empty
+/// until they land), so the probe never needs to enumerate the whole snapshot.
 struct StoreUpdateProbe {
     store: DictionaryStore,
+    readings: Vec<String>,
     stop: Arc<AtomicBool>,
     records: Arc<Mutex<Vec<Record>>>,
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -180,9 +185,10 @@ struct Record {
 }
 
 impl StoreUpdateProbe {
-    fn new(store: DictionaryStore) -> Self {
+    fn new(store: DictionaryStore, readings: Vec<String>) -> Self {
         Self {
             store,
+            readings,
             stop: Arc::new(AtomicBool::new(false)),
             records: Arc::new(Mutex::new(Vec::new())),
             handle: None,
@@ -194,29 +200,25 @@ impl StoreUpdateProbe {
         // prior fingerprint to compare against, even if subsequent store
         // updates are coalesced before the task gets its first turn.
         {
-            let snap = self.store.current();
-            let fp = Self::fingerprint(&snap);
-            self.records.lock().unwrap().push(Record {
-                fingerprint: fp,
-                reading_count: snap.entries_by_reading.len(),
-            });
+            let rec = Self::record(&self.store.current(), &self.readings);
+            self.records.lock().unwrap().push(rec);
         }
 
         let store = self.store.clone();
         let stop = self.stop.clone();
         let records = self.records.clone();
+        let readings = self.readings.clone();
         let handle = tokio::spawn(async move {
             while !stop.load(Ordering::Acquire) {
-                let snap = store.current();
-                let fp = Self::fingerprint(&snap);
+                let rec = Self::record(&store.current(), &readings);
                 {
                     let mut recs = records.lock().unwrap();
-                    let changed = recs.last().map(|r| r.fingerprint != fp).unwrap_or(true);
+                    let changed = recs
+                        .last()
+                        .map(|r| r.fingerprint != rec.fingerprint)
+                        .unwrap_or(true);
                     if changed {
-                        recs.push(Record {
-                            fingerprint: fp,
-                            reading_count: snap.entries_by_reading.len(),
-                        });
+                        recs.push(rec);
                     }
                 }
                 tokio::task::yield_now().await;
@@ -240,18 +242,30 @@ impl StoreUpdateProbe {
         self.records.lock().unwrap().len().saturating_sub(1)
     }
 
-    fn fingerprint(snapshot: &DictionarySnapshot) -> String {
-        let mut entries: Vec<(&String, &Vec<skkserv_compound::dictionary::Candidate>)> =
-            snapshot.entries_by_reading.iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-        let parts: Vec<String> = entries
-            .into_iter()
-            .map(|(k, v)| {
-                let texts: Vec<&str> = v.iter().map(|c| c.text.as_str()).collect();
-                format!("{}={}", k, texts.join(","))
+    fn fingerprint(&self, snapshot: &DictionarySnapshot) -> String {
+        Self::record(snapshot, &self.readings).fingerprint
+    }
+
+    /// Fingerprint + present-count over the watched readings only. `reading_count`
+    /// counts watched readings with at least one candidate, so it rises
+    /// monotonically as readings land (and never depends on unwatched entries).
+    fn record(snapshot: &DictionarySnapshot, readings: &[String]) -> Record {
+        let mut present = 0usize;
+        let parts: Vec<String> = readings
+            .iter()
+            .map(|reading| {
+                let cands = snapshot.candidates(reading);
+                if !cands.is_empty() {
+                    present += 1;
+                }
+                let texts: Vec<&str> = cands.iter().map(|c| c.text.as_str()).collect();
+                format!("{}={}", reading, texts.join(","))
             })
             .collect();
-        parts.join("|")
+        Record {
+            fingerprint: parts.join("|"),
+            reading_count: present,
+        }
     }
 }
 
@@ -289,10 +303,12 @@ async fn coalesces_events_during_reindex() {
     .await;
     assert!(bootstrapped);
 
-    let mut probe = StoreUpdateProbe::new(store.clone());
+    let write_count = 20usize;
+    let mut watched = vec!["あ".to_string()];
+    watched.extend((1..=write_count).map(|i| format!("こ{}", i)));
+    let mut probe = StoreUpdateProbe::new(store.clone(), watched);
     probe.start();
 
-    let write_count = 20usize;
     for i in 1..=write_count {
         append_line(&path, &format!("こ{} /v{}/\n", i, i));
     }
@@ -319,7 +335,7 @@ async fn coalesces_events_during_reindex() {
     .await;
     assert!(landed);
 
-    let final_fp = StoreUpdateProbe::fingerprint(&store.current());
+    let final_fp = probe.fingerprint(&store.current());
     let probe_records = probe.records.clone();
     let settled = wait_until(Duration::from_secs(2), || {
         let probe_records = probe_records.clone();
@@ -386,10 +402,12 @@ async fn reindex_is_single_flight_under_flood() {
     .await;
     assert!(bootstrapped);
 
-    let mut probe = StoreUpdateProbe::new(store.clone());
+    let write_count = 40usize;
+    let mut watched = vec!["あ".to_string()];
+    watched.extend((1..=write_count).map(|i| format!("な{}", i)));
+    let mut probe = StoreUpdateProbe::new(store.clone(), watched);
     probe.start();
 
-    let write_count = 40usize;
     for i in 1..=write_count {
         append_line(&path, &format!("な{} /n{}/\n", i, i));
     }
@@ -416,7 +434,7 @@ async fn reindex_is_single_flight_under_flood() {
     .await;
     assert!(landed);
 
-    let final_fp = StoreUpdateProbe::fingerprint(&store.current());
+    let final_fp = probe.fingerprint(&store.current());
     let probe_records = probe.records.clone();
     let settled = wait_until(Duration::from_secs(2), || {
         let probe_records = probe_records.clone();

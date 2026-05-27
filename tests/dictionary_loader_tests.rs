@@ -1,9 +1,27 @@
 // SPDX-License-Identifier: MIT
 
 use skkserv_compound::dictionary::{DictionarySource, ParsedEntry};
-use skkserv_compound::loader::{build_snapshot, load_snapshot};
+use skkserv_compound::loader::{DictionaryLoaderError, build_snapshot, read_dictionary_file};
+use skkserv_compound::parser::parse;
+use skkserv_compound::snapshot::DictionarySnapshot;
 use std::fs;
 use tempfile::TempDir;
+
+/// File-reading constructor used by the encoding/multi-dictionary tests below.
+/// Composes the public read + parse + build primitives (the production server
+/// uses the finer-grained layer loaders directly, so the crate no longer ships
+/// this convenience wrapper itself).
+fn load_snapshot(
+    user_dictionary_path: &str,
+    system_dictionary_paths: &[String],
+) -> Result<DictionarySnapshot, DictionaryLoaderError> {
+    let user = parse(&read_dictionary_file(user_dictionary_path)?);
+    let mut system = Vec::new();
+    for path in system_dictionary_paths {
+        system.extend(parse(&read_dictionary_file(path)?));
+    }
+    Ok(build_snapshot(&user, &system))
+}
 
 fn entry(reading: &str, candidates: &[&str]) -> ParsedEntry {
     ParsedEntry::new(
@@ -82,7 +100,9 @@ fn okuri_ari_entries_go_into_okuri_ari_bucket() {
         .map(|c| c.text.as_str())
         .collect();
     assert_eq!(mond, vec!["問題"]);
-    assert!(snapshot.readings_starting_with('な').is_empty());
+    // The okuri-ari reading must not leak into the okuri-nashi prefix index:
+    // a nashi prefix search from 'な' over "なs" finds nothing.
+    assert!(snapshot.prefix_matches(&['な', 's'], 0).is_empty());
 }
 
 #[test]
@@ -206,11 +226,19 @@ fn first_character_index_narrows_readings() {
             entry("き", &["木"]),
         ],
     );
-    let mut readings: Vec<String> = snapshot.readings_starting_with('か').to_vec();
-    readings.sort();
-    assert_eq!(readings, vec!["か".to_string(), "かわ".to_string()]);
-    assert_eq!(
-        snapshot.readings_starting_with('き'),
-        &["き".to_string()][..]
-    );
+    // A prefix search from 'か' over "かわ" reaches only the 'か'-rooted
+    // readings ("か" and "かわ"), never the 'き'-rooted one.
+    let mut ka: Vec<String> = snapshot
+        .prefix_matches(&['か', 'わ'], 0)
+        .into_iter()
+        .map(|m| m.reading)
+        .collect();
+    ka.sort();
+    assert_eq!(ka, vec!["か".to_string(), "かわ".to_string()]);
+    let ki: Vec<String> = snapshot
+        .prefix_matches(&['き'], 0)
+        .into_iter()
+        .map(|m| m.reading)
+        .collect();
+    assert_eq!(ki, vec!["き".to_string()]);
 }

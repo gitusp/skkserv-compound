@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 use crate::loader::DictionaryLoaderError;
-use crate::loader::{expand_tilde, load_snapshot};
+use crate::loader::{expand_tilde, load_system_layer, load_user_layer};
+use crate::snapshot::{DictionarySnapshot, Layer};
 use crate::store::DictionaryStore;
 use log::warn;
 use notify::{Event, RecursiveMode, Watcher};
@@ -80,13 +81,22 @@ impl UserDictionaryWatcher {
         // to pick up immediately, instead of being lost in a TOCTOU window.
         let watcher = self.install_watcher()?;
 
-        let user = self.user_dictionary_path.clone();
+        // Build the immutable system tier exactly once. It is shared by `Arc`
+        // for the life of the watcher; subsequent reindexes only rebuild the
+        // (small) user tier, never re-reading the system dictionaries.
         let systems = self.system_dictionary_paths.clone();
-        let snapshot =
-            tokio::task::spawn_blocking(move || load_snapshot(&user, &systems)).await??;
-        self.store.update(snapshot);
+        let system =
+            Arc::new(tokio::task::spawn_blocking(move || load_system_layer(&systems)).await??);
 
-        let worker = self.spawn_worker();
+        let user = self.user_dictionary_path.clone();
+        let system_for_initial = system.clone();
+        let user_layer =
+            tokio::task::spawn_blocking(move || load_user_layer(&user, &system_for_initial))
+                .await??;
+        self.store
+            .update(DictionarySnapshot::from_layers(user_layer, system.clone()));
+
+        let worker = self.spawn_worker(system);
 
         let mut slot = self.runtime_lock();
         if slot.is_some() {
@@ -160,11 +170,10 @@ impl UserDictionaryWatcher {
         Ok(watcher)
     }
 
-    fn spawn_worker(&self) -> JoinHandle<()> {
+    fn spawn_worker(&self, system: Arc<Layer>) -> JoinHandle<()> {
         let notify = self.notify.clone();
         let stopped = self.stopped.clone();
         let user = self.user_dictionary_path.clone();
-        let systems = self.system_dictionary_paths.clone();
         let store = self.store.clone();
         tokio::spawn(async move {
             loop {
@@ -172,11 +181,14 @@ impl UserDictionaryWatcher {
                 if stopped.load(Ordering::Acquire) {
                     break;
                 }
+                // Only the user tier is rebuilt; the system tier is the shared
+                // `Arc` cloned once per reindex (a refcount bump, not a reload).
                 let user_clone = user.clone();
-                let systems_clone = systems.clone();
-                let res =
-                    tokio::task::spawn_blocking(move || load_snapshot(&user_clone, &systems_clone))
-                        .await;
+                let system_clone = system.clone();
+                let res = tokio::task::spawn_blocking(move || {
+                    load_user_layer(&user_clone, &system_clone)
+                })
+                .await;
                 // Re-check stop before publishing: stop() may have been
                 // called while the blocking load was in flight, and we do
                 // not want to overwrite the store after the watcher is
@@ -185,7 +197,9 @@ impl UserDictionaryWatcher {
                     break;
                 }
                 match res {
-                    Ok(Ok(snapshot)) => store.update(snapshot),
+                    Ok(Ok(user_layer)) => {
+                        store.update(DictionarySnapshot::from_layers(user_layer, system.clone()))
+                    }
                     Ok(Err(e)) => warn!("reindex failed; keeping previous snapshot: {}", e),
                     Err(e) => warn!("reindex task panicked: {}", e),
                 }

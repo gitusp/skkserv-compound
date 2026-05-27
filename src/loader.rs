@@ -2,10 +2,11 @@
 
 use crate::dictionary::{Candidate, DictionarySource, ParsedEntry};
 use crate::parser;
-use crate::snapshot::DictionarySnapshot;
+use crate::snapshot::{DictionarySnapshot, Layer};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -20,46 +21,69 @@ pub enum DictionaryLoaderError {
     },
 }
 
-pub fn load_snapshot(
-    user_dictionary_path: &str,
+pub fn build_snapshot(user: &[ParsedEntry], system: &[ParsedEntry]) -> DictionarySnapshot {
+    let system_layer = Arc::new(build_system_layer(system));
+    let user_layer = build_user_layer(user, &system_layer);
+    DictionarySnapshot::from_layers(user_layer, system_layer)
+}
+
+/// Read, parse, and index the system dictionaries. Built once at startup and
+/// shared across user-dictionary reloads — never re-read while the process runs.
+pub(crate) fn load_system_layer(
     system_dictionary_paths: &[String],
-) -> Result<DictionarySnapshot, DictionaryLoaderError> {
-    let user_text = read_dictionary_file(user_dictionary_path)?;
-    let user_parsed = parser::parse(&user_text);
+) -> Result<Layer, DictionaryLoaderError> {
     let mut system_parsed: Vec<ParsedEntry> = Vec::new();
     for path in system_dictionary_paths {
         let text = read_dictionary_file(path)?;
         system_parsed.extend(parser::parse(&text));
     }
-    Ok(build_snapshot(&user_parsed, &system_parsed))
+    Ok(build_system_layer(&system_parsed))
 }
 
-pub fn build_snapshot(user: &[ParsedEntry], system: &[ParsedEntry]) -> DictionarySnapshot {
-    let mut user_nashi: Vec<&ParsedEntry> = Vec::new();
-    let mut user_ari: Vec<&ParsedEntry> = Vec::new();
-    for entry in user {
-        if entry.is_okuri_ari {
-            user_ari.push(entry);
-        } else {
-            user_nashi.push(entry);
-        }
-    }
-    let mut system_nashi: Vec<&ParsedEntry> = Vec::new();
-    let mut system_ari: Vec<&ParsedEntry> = Vec::new();
-    for entry in system {
-        if entry.is_okuri_ari {
-            system_ari.push(entry);
-        } else {
-            system_nashi.push(entry);
-        }
-    }
-    DictionarySnapshot::new(
-        merge_bucket(&user_nashi, &system_nashi),
-        merge_bucket(&user_ari, &system_ari),
+/// Read, parse, and index the user dictionary, merging each reading's
+/// candidates with the (already-built) system tier. Cost scales with the user
+/// dictionary, not the system one — this is what runs on every user-dict change.
+pub(crate) fn load_user_layer(
+    user_dictionary_path: &str,
+    system: &Layer,
+) -> Result<Layer, DictionaryLoaderError> {
+    let user_text = read_dictionary_file(user_dictionary_path)?;
+    let user_parsed = parser::parse(&user_text);
+    Ok(build_user_layer(&user_parsed, system))
+}
+
+pub(crate) fn build_system_layer(system: &[ParsedEntry]) -> Layer {
+    let (nashi, ari) = partition_okuri(system);
+    Layer::new(
+        group_by_reading(&nashi, DictionarySource::System),
+        group_by_reading(&ari, DictionarySource::System),
     )
 }
 
-fn merge_bucket(user: &[&ParsedEntry], system: &[&ParsedEntry]) -> Vec<(String, Vec<Candidate>)> {
+pub(crate) fn build_user_layer(user: &[ParsedEntry], system: &Layer) -> Layer {
+    let (nashi, ari) = partition_okuri(user);
+    let nashi = merge_with_system(
+        group_by_reading(&nashi, DictionarySource::User),
+        &system.entries_by_reading,
+    );
+    let ari = merge_with_system(
+        group_by_reading(&ari, DictionarySource::User),
+        &system.okuri_ari_entries_by_reading,
+    );
+    Layer::new(nashi, ari)
+}
+
+fn partition_okuri(entries: &[ParsedEntry]) -> (Vec<&ParsedEntry>, Vec<&ParsedEntry>) {
+    entries.iter().partition(|e| !e.is_okuri_ari)
+}
+
+/// Group entries by reading in first-seen order, tagging each candidate with
+/// `source` and dropping duplicate texts within a reading. Empty groups are
+/// filtered out.
+fn group_by_reading(
+    entries: &[&ParsedEntry],
+    source: DictionarySource,
+) -> Vec<(String, Vec<Candidate>)> {
     struct Group {
         candidates: Vec<Candidate>,
         seen: HashSet<String>,
@@ -67,22 +91,17 @@ fn merge_bucket(user: &[&ParsedEntry], system: &[&ParsedEntry]) -> Vec<(String, 
     let mut groups: HashMap<String, Group> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
 
-    for (entries, source) in [
-        (user, DictionarySource::User),
-        (system, DictionarySource::System),
-    ] {
-        for entry in entries {
-            let group = groups.entry(entry.reading.clone()).or_insert_with(|| {
-                order.push(entry.reading.clone());
-                Group {
-                    candidates: Vec::new(),
-                    seen: HashSet::new(),
-                }
-            });
-            for text in &entry.candidates {
-                if group.seen.insert(text.clone()) {
-                    group.candidates.push(Candidate::new(text.clone(), source));
-                }
+    for entry in entries {
+        let group = groups.entry(entry.reading.clone()).or_insert_with(|| {
+            order.push(entry.reading.clone());
+            Group {
+                candidates: Vec::new(),
+                seen: HashSet::new(),
+            }
+        });
+        for text in &entry.candidates {
+            if group.seen.insert(text.clone()) {
+                group.candidates.push(Candidate::new(text.clone(), source));
             }
         }
     }
@@ -96,6 +115,29 @@ fn merge_bucket(user: &[&ParsedEntry], system: &[&ParsedEntry]) -> Vec<(String, 
         }
     }
     result
+}
+
+/// Append the system tier's candidates for each user reading after the user's
+/// own (deduped by text), reproducing the user-first ordering of the former
+/// single-pass merge — but scoped to the readings the user dictionary touches.
+fn merge_with_system(
+    user_groups: Vec<(String, Vec<Candidate>)>,
+    system_by_reading: &HashMap<String, Vec<Candidate>>,
+) -> Vec<(String, Vec<Candidate>)> {
+    user_groups
+        .into_iter()
+        .map(|(reading, mut candidates)| {
+            if let Some(system_candidates) = system_by_reading.get(&reading) {
+                let mut seen: HashSet<String> = candidates.iter().map(|c| c.text.clone()).collect();
+                for candidate in system_candidates {
+                    if seen.insert(candidate.text.clone()) {
+                        candidates.push(candidate.clone());
+                    }
+                }
+            }
+            (reading, candidates)
+        })
+        .collect()
 }
 
 pub fn read_dictionary_file(path: &str) -> Result<String, DictionaryLoaderError> {
