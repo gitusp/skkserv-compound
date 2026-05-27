@@ -64,11 +64,11 @@ pub(crate) fn build_user_layer(user: &[ParsedEntry], system: &Layer) -> Layer {
     let (nashi, ari) = partition_okuri(user);
     let nashi = merge_with_system(
         group_by_reading(&nashi, DictionarySource::User),
-        &system.entries_by_reading,
+        &system.nashi.entries_by_reading,
     );
     let ari = merge_with_system(
         group_by_reading(&ari, DictionarySource::User),
-        &system.okuri_ari_entries_by_reading,
+        &system.ari.entries_by_reading,
     );
     Layer::new(nashi, ari)
 }

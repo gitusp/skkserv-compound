@@ -10,6 +10,37 @@ pub struct PrefixMatch {
     pub reading: String,
 }
 
+/// One okuri-nashi or okuri-ari index: candidates keyed by reading, plus the
+/// readings grouped by first char for prefix matching.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Bucket {
+    pub entries_by_reading: HashMap<String, Vec<Candidate>>,
+    pub readings_by_first_char: HashMap<char, Vec<String>>,
+}
+
+impl Bucket {
+    /// Index a bucket from ordered (reading, candidates) pairs. Input order is
+    /// preserved in the per-first-char reading lists (drives the generator's
+    /// split-order tiebreak).
+    fn new(entries: Vec<(String, Vec<Candidate>)>) -> Self {
+        let mut entries_by_reading: HashMap<String, Vec<Candidate>> = HashMap::new();
+        let mut readings_by_first_char: HashMap<char, Vec<String>> = HashMap::new();
+        for (reading, cands) in entries {
+            if let Some(first) = reading.chars().next() {
+                readings_by_first_char
+                    .entry(first)
+                    .or_default()
+                    .push(reading.clone());
+            }
+            entries_by_reading.insert(reading, cands);
+        }
+        Self {
+            entries_by_reading,
+            readings_by_first_char,
+        }
+    }
+}
+
 /// One indexed dictionary tier. The shape is the same for the system and user
 /// tiers; what differs is lifetime and contents:
 ///
@@ -23,47 +54,19 @@ pub struct PrefixMatch {
 ///   conversions back into the user dictionary).
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Layer {
-    pub entries_by_reading: HashMap<String, Vec<Candidate>>,
-    pub readings_by_first_char: HashMap<char, Vec<String>>,
-    pub okuri_ari_entries_by_reading: HashMap<String, Vec<Candidate>>,
-    pub okuri_ari_readings_by_first_char: HashMap<char, Vec<String>>,
+    pub nashi: Bucket,
+    pub ari: Bucket,
 }
 
 impl Layer {
-    /// Index a layer from ordered `(reading, candidates)` pairs for the
-    /// okuri-nashi and okuri-ari buckets. Input order is preserved in the
-    /// per-first-char reading lists (it drives the generator's split-order
-    /// tiebreak).
     pub(crate) fn new(
         ordered_entries: Vec<(String, Vec<Candidate>)>,
         ordered_okuri_ari_entries: Vec<(String, Vec<Candidate>)>,
     ) -> Self {
-        let (entries_by_reading, readings_by_first_char) = Self::index(ordered_entries);
-        let (okuri_ari_entries_by_reading, okuri_ari_readings_by_first_char) =
-            Self::index(ordered_okuri_ari_entries);
         Self {
-            entries_by_reading,
-            readings_by_first_char,
-            okuri_ari_entries_by_reading,
-            okuri_ari_readings_by_first_char,
+            nashi: Bucket::new(ordered_entries),
+            ari: Bucket::new(ordered_okuri_ari_entries),
         }
-    }
-
-    fn index(
-        entries: Vec<(String, Vec<Candidate>)>,
-    ) -> (HashMap<String, Vec<Candidate>>, HashMap<char, Vec<String>>) {
-        let mut by_reading: HashMap<String, Vec<Candidate>> = HashMap::new();
-        let mut by_first_char: HashMap<char, Vec<String>> = HashMap::new();
-        for (reading, cands) in entries {
-            if let Some(first) = reading.chars().next() {
-                by_first_char
-                    .entry(first)
-                    .or_default()
-                    .push(reading.clone());
-            }
-            by_reading.insert(reading, cands);
-        }
-        (by_reading, by_first_char)
     }
 }
 
@@ -81,29 +84,52 @@ impl DictionarySnapshot {
         Self { user, system }
     }
 
-    pub fn candidates(&self, reading: &str) -> &[Candidate] {
-        // The user layer's list is pre-merged with the system tier, so a hit
-        // there is authoritative; only fall through to system when the user
-        // dictionary doesn't mention this reading at all.
-        if let Some(cands) = self.user.entries_by_reading.get(reading) {
+    /// The user layer's list is pre-merged with the system tier, so a hit
+    /// there is authoritative; only fall through to system when the user
+    /// dictionary doesn't mention this reading at all.
+    fn candidates_in<'a>(user: &'a Bucket, system: &'a Bucket, reading: &str) -> &'a [Candidate] {
+        if let Some(cands) = user.entries_by_reading.get(reading) {
             return cands.as_slice();
         }
-        self.system
+        system
             .entries_by_reading
             .get(reading)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
+    pub fn candidates(&self, reading: &str) -> &[Candidate] {
+        Self::candidates_in(&self.user.nashi, &self.system.nashi, reading)
+    }
+
     pub fn okuri_ari_candidates(&self, reading: &str) -> &[Candidate] {
-        if let Some(cands) = self.user.okuri_ari_entries_by_reading.get(reading) {
-            return cands.as_slice();
+        Self::candidates_in(&self.user.ari, &self.system.ari, reading)
+    }
+
+    /// Run `collect` over the user readings then the system readings, dropping
+    /// any system match whose reading the user layer already produced — so a
+    /// reading present in both tiers appears exactly once, at its user-tier
+    /// position.
+    fn prefix_matches_in(
+        user_readings: Option<&Vec<String>>,
+        system_readings: Option<&Vec<String>>,
+        mut collect: impl FnMut(&[String], &mut Vec<PrefixMatch>),
+    ) -> Vec<PrefixMatch> {
+        let mut result = Vec::new();
+        if let Some(readings) = user_readings {
+            collect(readings, &mut result);
         }
-        self.system
-            .okuri_ari_entries_by_reading
-            .get(reading)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        let user_seen: HashSet<String> = result.iter().map(|m| m.reading.clone()).collect();
+        if let Some(readings) = system_readings {
+            let mut sys = Vec::new();
+            collect(readings, &mut sys);
+            for m in sys {
+                if !user_seen.contains(&m.reading) {
+                    result.push(m);
+                }
+            }
+        }
+        result
     }
 
     /// Every okuri-nashi reading that matches a prefix of `chars[start...]`.
@@ -115,21 +141,11 @@ impl DictionarySnapshot {
             return Vec::new();
         }
         let first = chars[start];
-        let mut result = Vec::new();
-        if let Some(readings) = self.user.readings_by_first_char.get(&first) {
-            collect_prefix_matches(readings, chars, start, &mut result);
-        }
-        let user_seen: HashSet<String> = result.iter().map(|m| m.reading.clone()).collect();
-        if let Some(readings) = self.system.readings_by_first_char.get(&first) {
-            let mut sys = Vec::new();
-            collect_prefix_matches(readings, chars, start, &mut sys);
-            for m in sys {
-                if !user_seen.contains(&m.reading) {
-                    result.push(m);
-                }
-            }
-        }
-        result
+        Self::prefix_matches_in(
+            self.user.nashi.readings_by_first_char.get(&first),
+            self.system.nashi.readings_by_first_char.get(&first),
+            |readings, out| collect_prefix_matches(readings, chars, start, out),
+        )
     }
 
     /// Every okuri-ari reading whose hiragana stem matches a prefix of
@@ -146,21 +162,13 @@ impl DictionarySnapshot {
             return Vec::new();
         }
         let first = chars[start];
-        let mut result = Vec::new();
-        if let Some(readings) = self.user.okuri_ari_readings_by_first_char.get(&first) {
-            collect_okuri_ari_prefix_matches(readings, chars, start, okuri_prefix, &mut result);
-        }
-        let user_seen: HashSet<String> = result.iter().map(|m| m.reading.clone()).collect();
-        if let Some(readings) = self.system.okuri_ari_readings_by_first_char.get(&first) {
-            let mut sys = Vec::new();
-            collect_okuri_ari_prefix_matches(readings, chars, start, okuri_prefix, &mut sys);
-            for m in sys {
-                if !user_seen.contains(&m.reading) {
-                    result.push(m);
-                }
-            }
-        }
-        result
+        Self::prefix_matches_in(
+            self.user.ari.readings_by_first_char.get(&first),
+            self.system.ari.readings_by_first_char.get(&first),
+            |readings, out| {
+                collect_okuri_ari_prefix_matches(readings, chars, start, okuri_prefix, out)
+            },
+        )
     }
 
     pub fn empty() -> Self {
