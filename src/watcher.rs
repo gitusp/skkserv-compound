@@ -104,6 +104,17 @@ impl UserDictionaryWatcher {
             worker.abort();
             return Err(WatcherError::AlreadyStarted);
         }
+        // If stop() landed during the initial load, it set `stopped` before
+        // taking this same lock, so we observe it here and must NOT install:
+        // installing now would leave a live FS watcher whose worker exits
+        // immediately on `stopped` — a zombie that never reindexes and pins the
+        // slot as `Some` so the watcher can never be restarted. Bailing while
+        // holding the lock closes the race with stop()'s slot.take().
+        if self.stopped.load(Ordering::Acquire) {
+            worker.abort();
+            // `watcher` (local) drops here, unsubscribing the FS watch.
+            return Ok(());
+        }
         *slot = Some(Runtime {
             _watcher: watcher,
             _worker: worker,
