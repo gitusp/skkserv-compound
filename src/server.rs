@@ -18,6 +18,11 @@ const MAX_PENDING_BYTES: usize = 64 * 1024;
 // and report it back to clients (opcode `3`).
 const BIND_ADDRESS: &str = "127.0.0.1";
 
+// skkserv-compound is a loopback-only personal backend; the hostname in the
+// opcode-3 reply is informational only, so a fixed label is sufficient and
+// avoids pulling a hostname-lookup dependency.
+const LOCAL_HOST_NAME: &str = "localhost";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncomingCharset {
     Utf8,
@@ -109,16 +114,15 @@ impl SkkServer {
         }
     }
 
-    pub async fn handle_opcode(&self, opcode: char, _operand: &str, port: u16) -> OpcodeResult {
+    pub async fn handle_opcode(&self, opcode: char, operand: &str, port: u16) -> OpcodeResult {
         match opcode {
             '0' => OpcodeResult::Close,
-            '1' => OpcodeResult::Reply(self.candidate_response(_operand).await),
+            '1' => OpcodeResult::Reply(self.candidate_response(operand).await),
             '2' => OpcodeResult::Reply(format!("{}/{} ", self.server_name, self.version)),
             '3' => {
                 // Mirror Swift's `Host.current().localizedName ?? ""`, which on
                 // macOS returns the LocalHostName (no trailing `.local`).
-                let hostname = local_host_name();
-                OpcodeResult::Reply(format!("{}/{}:{} ", hostname, BIND_ADDRESS, port))
+                OpcodeResult::Reply(format!("{}/{}:{} ", LOCAL_HOST_NAME, BIND_ADDRESS, port))
             }
             '4' => OpcodeResult::Reply("4\n".to_string()),
             other => {
@@ -134,12 +138,7 @@ impl SkkServer {
             return "4\n".to_string();
         }
         let snapshot = self.store.current();
-        let candidates = generate(
-            &body,
-            &snapshot,
-            self.generator_config,
-            okuri_prefix.as_deref(),
-        );
+        let candidates = generate(&body, &snapshot, self.generator_config, okuri_prefix);
         // Drop characters that would corrupt the SKK wire framing (`/` is the
         // separator, `\n` terminates the reply) or break line-oriented
         // clients (`\r`, NUL). Resulting empty candidates are filtered out.
@@ -225,17 +224,10 @@ pub fn extract_messages(buffer: &mut Vec<u8>, charset: IncomingCharset) -> Vec<(
     results
 }
 
-fn local_host_name() -> String {
-    // skkserv-compound is a loopback-only personal backend; the hostname
-    // in the opcode-3 reply is informational only, so a fixed label is
-    // sufficient and avoids pulling a hostname-lookup dependency.
-    "localhost".to_string()
-}
-
 /// Normalize a raw skkserv yomi into a `(body, okuri_prefix)` pair. Trims
 /// whitespace, lifts a trailing `<hiragana><a-z>` letter into `okuri_prefix`,
 /// and passes all-ASCII (abbrev) inputs through verbatim.
-pub fn sanitize_yomi(yomi: &str) -> (String, Option<String>) {
+pub fn sanitize_yomi(yomi: &str) -> (String, Option<char>) {
     let trimmed = yomi.trim();
     if trimmed.is_empty() {
         return (String::new(), None);
@@ -248,7 +240,7 @@ pub fn sanitize_yomi(yomi: &str) -> (String, Option<String>) {
         let mut chars: Vec<char> = trimmed.chars().collect();
         chars.pop();
         let body: String = chars.into_iter().collect();
-        return (body, Some(okuri.to_string()));
+        return (body, Some(okuri));
     }
     (trimmed.to_string(), None)
 }

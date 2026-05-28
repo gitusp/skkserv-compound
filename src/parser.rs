@@ -3,6 +3,11 @@
 use crate::dictionary::ParsedEntry;
 use std::collections::HashSet;
 
+/// True if `c` is in the SKK okuri-ari stem hiragana range (U+3041..=U+3096).
+fn is_hiragana(c: char) -> bool {
+    ('\u{3041}'..='\u{3096}').contains(&c)
+}
+
 pub fn parse(source: &str) -> Vec<ParsedEntry> {
     let mut result = Vec::new();
     for line in source.lines() {
@@ -57,18 +62,23 @@ pub fn parse_line(raw: &str) -> Option<ParsedEntry> {
             continue;
         }
         if okuri_ari {
-            // Only treat `[<hiragana>` as a block opener; a candidate that
-            // legitimately starts with `[` followed by anything else (e.g.
-            // `[英語]亜`) must not be swallowed.
+            // A token is an okuri-block opener only when it is `[` followed by
+            // one-or-more okurigana hiragana and nothing else (e.g. `[り`,
+            // `[った`). Any candidate containing a non-hiragana char after the
+            // `[` (e.g. `[英語]亜`, `[あ]対`) is kept as a candidate.
             if let Some(rest) = text.strip_prefix('[')
-                && rest
-                    .chars()
-                    .next()
-                    .is_some_and(|c| (0x3041..=0x3096).contains(&(c as u32)))
+                && !rest.is_empty()
+                && rest.chars().all(is_hiragana)
             {
                 in_okuri_block = true;
                 continue;
             }
+            // Irreducible assumption: a bare `]` is treated as the block
+            // terminator. The SKK format has no escaping for `[`/`]`, so a
+            // candidate whose text is literally `]` cannot be distinguished
+            // from a structural closer — this is not fixable without a
+            // format-level change. Standard SKK dictionaries never use a bare
+            // `]` (or a pure `[`+hiragana token) as candidate text.
             if in_okuri_block && text == "]" {
                 in_okuri_block = false;
                 continue;
@@ -98,8 +108,7 @@ pub fn trailing_okuri(text: &str) -> Option<char> {
         return None;
     }
     let before = iter.next()?;
-    let u = before as u32;
-    if (0x3041..=0x3096).contains(&u) {
+    if is_hiragana(before) {
         Some(last)
     } else {
         None

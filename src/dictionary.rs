@@ -30,11 +30,7 @@ pub struct ParsedEntry {
 
 impl ParsedEntry {
     pub fn new(reading: impl Into<String>, candidates: Vec<String>) -> Self {
-        Self {
-            reading: reading.into(),
-            candidates,
-            is_okuri_ari: false,
-        }
+        Self::with_okuri(reading, candidates, false)
     }
 
     pub fn with_okuri(

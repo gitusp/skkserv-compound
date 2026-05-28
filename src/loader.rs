@@ -64,11 +64,11 @@ pub(crate) fn build_user_layer(user: &[ParsedEntry], system: &Layer) -> Layer {
     let (nashi, ari) = partition_okuri(user);
     let nashi = merge_with_system(
         group_by_reading(&nashi, DictionarySource::User),
-        &system.entries_by_reading,
+        &system.nashi.entries_by_reading,
     );
     let ari = merge_with_system(
         group_by_reading(&ari, DictionarySource::User),
-        &system.okuri_ari_entries_by_reading,
+        &system.ari.entries_by_reading,
     );
     Layer::new(nashi, ari)
 }
@@ -78,8 +78,8 @@ fn partition_okuri(entries: &[ParsedEntry]) -> (Vec<&ParsedEntry>, Vec<&ParsedEn
 }
 
 /// Group entries by reading in first-seen order, tagging each candidate with
-/// `source` and dropping duplicate texts within a reading. Empty groups are
-/// filtered out.
+/// `source` and dropping duplicate texts within a reading. Every parsed entry
+/// has at least one candidate, so each group ends up non-empty.
 fn group_by_reading(
     entries: &[&ParsedEntry],
     source: DictionarySource,
@@ -108,9 +108,7 @@ fn group_by_reading(
 
     let mut result: Vec<(String, Vec<Candidate>)> = Vec::with_capacity(order.len());
     for reading in order {
-        if let Some(group) = groups.remove(&reading)
-            && !group.candidates.is_empty()
-        {
+        if let Some(group) = groups.remove(&reading) {
             result.push((reading, group.candidates));
         }
     }

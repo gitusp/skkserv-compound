@@ -2,7 +2,7 @@
 
 use skkserv_compound::snapshot::DictionarySnapshot;
 use skkserv_compound::store::DictionaryStore;
-use skkserv_compound::watcher::UserDictionaryWatcher;
+use skkserv_compound::watcher::{UserDictionaryWatcher, WatcherError};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::Arc;
@@ -372,6 +372,56 @@ async fn coalesces_events_during_reindex() {
     assert_eq!(bootstrap, vec!["v0".to_string()]);
 
     probe.stop();
+    watcher.stop();
+}
+
+/// A `stop()` that lands while `start()` is still awaiting its initial load
+/// must not leave a zombie: the runtime slot has to end up empty so the watcher
+/// can be started again. Before the fix, `start()` would install a `Runtime`
+/// after `stop()` had already taken `None`, pinning the slot as `Some` with a
+/// worker that exits immediately — `AlreadyStarted` forever.
+///
+/// This interleaving is deterministic on the default current-thread runtime:
+/// `tokio::spawn` schedules `start()`, the `yield_now().await` lets it run up
+/// to its first `.await` (the `spawn_blocking` initial load), where it parks
+/// because the blocking work cannot complete within that synchronous slice.
+/// Control returns here and the synchronous `stop()` lands squarely in the
+/// load window before `start()` installs the `Runtime`.
+#[tokio::test]
+async fn stop_during_start_leaves_no_zombie() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("user.dict");
+    std::fs::write(&path, "あ /亜/\n").unwrap();
+
+    let store = DictionaryStore::new();
+    let watcher = Arc::new(UserDictionaryWatcher::new(
+        path.to_str().unwrap().to_string(),
+        vec![],
+        store,
+    ));
+
+    let starter = watcher.clone();
+    let start = tokio::spawn(async move { starter.start().await });
+
+    // Let the spawned start() advance to its first await (the initial load),
+    // where it parks; then stop() lands inside that window.
+    tokio::task::yield_now().await;
+    watcher.stop();
+
+    // start() must finish without error: it either installed and was then
+    // cleanly torn down by stop(), or observed the stop flag and bailed.
+    start.await.unwrap().unwrap();
+
+    // The slot must be empty, so a fresh start() succeeds rather than
+    // returning AlreadyStarted (the zombie symptom).
+    match watcher.start().await {
+        Ok(()) => {}
+        Err(WatcherError::AlreadyStarted) => {
+            panic!("watcher left a zombie runtime: fresh start() returned AlreadyStarted")
+        }
+        Err(e) => panic!("unexpected error from restart: {}", e),
+    }
+
     watcher.stop();
 }
 

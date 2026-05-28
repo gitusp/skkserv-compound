@@ -333,7 +333,7 @@ fn combines_okuri_ari_compound() {
         "もんだいな",
         &snap,
         CompoundGeneratorConfig::default(),
-        Some("s"),
+        Some('s'),
     );
     assert_eq!(out, vec!["問題無", "問題済"]);
 }
@@ -341,7 +341,7 @@ fn combines_okuri_ari_compound() {
 #[test]
 fn skips_okuri_ari_single_word_exact_match() {
     let snap = okuri_snapshot(&[], &[], &[], &[("はs", &["有"])]);
-    let out = generate("は", &snap, CompoundGeneratorConfig::default(), Some("s"));
+    let out = generate("は", &snap, CompoundGeneratorConfig::default(), Some('s'));
     assert!(out.is_empty());
 }
 
@@ -357,7 +357,7 @@ fn okuri_ari_only_at_last_part() {
         "なもんだい",
         &snap,
         CompoundGeneratorConfig::default(),
-        Some("s"),
+        Some('s'),
     );
     assert!(out.is_empty());
 }
@@ -374,7 +374,7 @@ fn okuri_prefix_does_not_emit_okuri_nashi_splits() {
         "もんだいな",
         &snap,
         CompoundGeneratorConfig::default(),
-        Some("s"),
+        Some('s'),
     );
     assert_eq!(out, vec!["問題無".to_string()]);
     assert!(!out.iter().any(|s| s == "問題菜"));
@@ -432,7 +432,7 @@ fn mondaina_s_does_not_emit_okuri_ari_bracket_metadata() {
         "もんだいな",
         &snap,
         CompoundGeneratorConfig::default(),
-        Some("s"),
+        Some('s'),
     );
     assert!(
         !out.iter().any(|s| s.contains('[') || s.contains(']')),

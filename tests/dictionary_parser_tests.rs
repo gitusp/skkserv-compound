@@ -116,3 +116,49 @@ fn strips_okuri_ari_bracket_annotations() {
         vec!["無".to_string(), "成".to_string(), "為".to_string()]
     );
 }
+
+#[test]
+fn okuri_ari_skips_structural_block_tokens() {
+    // A standard okuri-ari entry with per-okurigana annotation blocks: the
+    // real candidates are emitted, but the `[<okuri>` openers and `]` closers
+    // are structural and must NOT appear as candidates.
+    let entries = parse("おくr /送/[り/送/]/[る/送/]/");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reading, "おくr");
+    assert!(entries[0].is_okuri_ari);
+    assert_eq!(entries[0].candidates, vec!["送".to_string()]);
+    assert!(!entries[0].candidates.iter().any(|c| c == "[り"));
+    assert!(!entries[0].candidates.iter().any(|c| c == "]"));
+}
+
+#[test]
+fn okuri_ari_keeps_candidate_with_bracket_hiragana_then_non_hiragana() {
+    // `[あ]対` starts with `[` + hiragana (`あ`) but is followed by a
+    // non-hiragana char (`]`), so the remainder after `[` is not pure
+    // hiragana. Under the old `.next().is_some_and(is_hiragana)` rule this
+    // candidate was wrongly swallowed as a block opener; it must now be kept.
+    let entries = parse("あたいs /価/[あ]対/[す/価/]/");
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].is_okuri_ari);
+    assert!(
+        entries[0].candidates.iter().any(|c| c == "[あ]対"),
+        "expected `[あ]対` to be kept as a candidate, got {:?}",
+        entries[0].candidates
+    );
+    assert!(entries[0].candidates.iter().any(|c| c == "価"));
+    assert!(!entries[0].candidates.iter().any(|c| c == "]"));
+}
+
+#[test]
+fn okuri_ari_keeps_candidate_with_bracket_non_hiragana() {
+    // `[英語]亜` starts with `[` + a non-hiragana char, so it was never a
+    // block opener under either rule — confirm it is still kept.
+    let entries = parse("あs /亜/[英語]亜/[す/亜/]/");
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].is_okuri_ari);
+    assert!(
+        entries[0].candidates.iter().any(|c| c == "[英語]亜"),
+        "expected `[英語]亜` to be kept as a candidate, got {:?}",
+        entries[0].candidates
+    );
+}
