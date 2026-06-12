@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
-// GOLDEN behavioral snapshot of the generator (index-sum / diagonal rank, no
-// per-reading cap). A diff tool that makes every change in observable output
-// VISIBLE and reviewable, scenario by scenario. Scenarios A/B/C/G/H exercise
-// the diagonal expansion and cap-free sweeps; D/E/F are invariants that pin the
-// k-axis (fewer parts first) and round-robin-across-splits behavior.
+// GOLDEN behavioral snapshot of the generator (system-count then index-sum /
+// diagonal rank, no per-reading cap). A diff tool that makes every change in
+// observable output VISIBLE and reviewable, scenario by scenario. Scenarios
+// A/B/C/G/H exercise the diagonal expansion and cap-free sweeps; D/E/F are
+// invariants that pin the k-axis (fewer parts first) and
+// round-robin-across-splits behavior; I pins the source axis (fewer
+// system-sourced parts first within a k).
 //
 // To (re)capture: run `cargo test --test golden_compound_tests -- --nocapture
 // dump_golden` and paste the printed literals into the scenarios below.
@@ -32,6 +34,12 @@ fn ari(reading: &str, candidates: &[&str]) -> ParsedEntry {
 fn snap_nashi(system: &[(&str, &[&str])]) -> DictionarySnapshot {
     let s: Vec<ParsedEntry> = system.iter().map(|(r, c)| nashi(r, c)).collect();
     build_snapshot(&[], &s)
+}
+
+fn snap_mixed(user: &[(&str, &[&str])], system: &[(&str, &[&str])]) -> DictionarySnapshot {
+    let u: Vec<ParsedEntry> = user.iter().map(|(r, c)| nashi(r, c)).collect();
+    let s: Vec<ParsedEntry> = system.iter().map(|(r, c)| nashi(r, c)).collect();
+    build_snapshot(&u, &s)
 }
 
 fn snap_okuri(system: &[(&str, &[&str])], okuri_system: &[(&str, &[&str])]) -> DictionarySnapshot {
@@ -159,6 +167,21 @@ fn run_all() -> Vec<(&'static str, Vec<String>)> {
                 None,
             ),
         ),
+        // I. User/system mix at the same k: あい is in both tiers (merged list
+        //    [UA(user), SA(system)]), あ+いう is system-only. Combinations sort
+        //    by system-sourced part count before index-sum rank.
+        (
+            "I_fewer_system_parts_first",
+            generate(
+                "あいう",
+                &snap_mixed(
+                    &[("あい", &["UA"]), ("う", &["UC"])],
+                    &[("あい", &["SA"]), ("あ", &["SD"]), ("いう", &["SB"])],
+                ),
+                CompoundGeneratorConfig::default(),
+                None,
+            ),
+        ),
     ]
 }
 
@@ -182,6 +205,9 @@ const GOLDEN: &[(&str, &[&str])] = &[
     ("G_okuri_ari_sweep", &["問題無", "問題済", "問題為", "問題成", "問題鳴", "問題生"]),
     // Diagonal under an explicit final cap of 6: the first two rank bands.
     ("H_final_cap_6_both_sides", &["a0b0", "a0b1", "a1b0", "a0b2", "a1b1", "a2b0"]),
+    // INVARIANT: 0 system parts (UAUC), then 1 (SAUC, despite rank 1), then 2
+    // (SDSB, despite rank 0).
+    ("I_fewer_system_parts_first", &["UAUC", "SAUC", "SDSB"]),
 ];
 
 #[test]

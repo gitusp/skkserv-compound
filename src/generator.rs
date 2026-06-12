@@ -21,6 +21,14 @@
 //!
 //! 2. **Within a fixed `k`,** across all valid splits and all their
 //!    combinations:
+//!    - `system_count` = the number of chosen candidates sourced from the
+//!      **system** dictionary, ascending. A compound built entirely from words
+//!      the user has actually confirmed before (user-dictionary candidates)
+//!      always precedes one that stitches in raw system entries, no matter how
+//!      the splits or indices fall. Candidate lists are always ordered
+//!      user-sourced first then system-sourced (see `loader::merge_with_system`),
+//!      so bumping an index never decreases this count — the lazy best-first
+//!      enumeration below stays monotone with it as the leading key.
 //!    - `rank` = the **sum of the chosen candidate indices**, ascending. A
 //!      candidate index is its position in that part's candidate slice
 //!      (`0` = top priority). This is a *balanced / diagonal* enumeration: a
@@ -28,10 +36,10 @@
 //!      concentrated on one part (rank >= 2). There is deliberately no
 //!      length/balance/semantic heuristic — ordering beyond fewer-parts-first
 //!      is left to dictionary order and user-dictionary learning.
-//!    - **Tiebreak 1** (equal rank): split enumeration order, ascending. Splits
-//!      enumerate by extending part boundaries left-to-right in the order
-//!      `prefix_matches` / `okuri_ari_prefix_matches` return readings (i.e.
-//!      dictionary registration order).
+//!    - **Tiebreak 1** (equal system count and rank): split enumeration order,
+//!      ascending. Splits enumerate by extending part boundaries left-to-right
+//!      in the order `prefix_matches` / `okuri_ari_prefix_matches` return
+//!      readings (i.e. dictionary registration order).
 //!    - **Tiebreak 2** (equal rank *and* same split): the index tuple compared
 //!      lexicographically, ascending. (Disambiguates e.g. (0,2) vs (1,1) vs
 //!      (2,0), which all share rank 2.)
@@ -45,7 +53,7 @@
 //! For a fixed `k` we run a lazy best-first walk over combinations using a
 //! binary min-heap (`BinaryHeap<Reverse<State>>`). Each split is seeded with its
 //! all-zero index tuple. Each pop yields the globally smallest unexpanded state
-//! under the `(rank, split order, index tuple)` key; we then push its
+//! under the `(system count, rank, split order, index tuple)` key; we then push its
 //! successors — the tuple with exactly one index position bumped by one. A tuple
 //! is reachable by bumping different positions, so to generate each exactly once
 //! every state only bumps positions at or after a recorded `frontier` index
@@ -53,7 +61,7 @@
 //! standard lazy "k-smallest sums" enumeration: it never materializes the full
 //! cartesian product and stops the instant the cap is met.
 
-use crate::dictionary::Candidate;
+use crate::dictionary::{Candidate, DictionarySource};
 use crate::snapshot::DictionarySnapshot;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashSet};
@@ -90,6 +98,8 @@ struct Split<'a> {
 
 /// A point in the per-`k` lazy enumeration: one candidate index per part.
 struct State {
+    /// How many of the chosen candidates are system-sourced.
+    system_count: usize,
     /// Sum of `indices` — the rank.
     rank: usize,
     /// Which split this combination belongs to (enumeration order).
@@ -101,8 +111,13 @@ struct State {
 }
 
 impl State {
-    fn ordering_key(&self) -> (usize, usize, &[usize]) {
-        (self.rank, self.split_order, self.indices.as_slice())
+    fn ordering_key(&self) -> (usize, usize, usize, &[usize]) {
+        (
+            self.system_count,
+            self.rank,
+            self.split_order,
+            self.indices.as_slice(),
+        )
     }
 }
 
@@ -122,11 +137,15 @@ impl PartialOrd for State {
 
 impl Ord for State {
     fn cmp(&self, other: &Self) -> Ordering {
-        // (rank, split order, index tuple) all ascending => "smaller" is better.
-        // The heap is a max-heap, so callers wrap states in `Reverse`.
-        let (ar, ao, ai) = self.ordering_key();
-        let (br, bo, bi) = other.ordering_key();
-        ar.cmp(&br).then(ao.cmp(&bo)).then(ai.cmp(bi))
+        // (system count, rank, split order, index tuple) all ascending =>
+        // "smaller" is better. The heap is a max-heap, so callers wrap states
+        // in `Reverse`.
+        let (asys, ar, ao, ai) = self.ordering_key();
+        let (bsys, br, bo, bi) = other.ordering_key();
+        asys.cmp(&bsys)
+            .then(ar.cmp(&br))
+            .then(ao.cmp(&bo))
+            .then(ai.cmp(bi))
     }
 }
 
@@ -279,6 +298,16 @@ fn extend_split<'a>(
     }
 }
 
+/// How many of the chosen candidates come from the system dictionary. `k` is
+/// small, so recounting on every heap push is cheaper than bookkeeping.
+fn system_count(parts: &[&[Candidate]], indices: &[usize]) -> usize {
+    parts
+        .iter()
+        .zip(indices)
+        .filter(|(part, idx)| part[**idx].source == DictionarySource::System)
+        .count()
+}
+
 /// Within a fixed `k`, lazily enumerate combinations across all `splits` in the
 /// required total order and append distinct output texts to `results` until the
 /// cap is hit.
@@ -292,10 +321,12 @@ fn collect_for_k(
 
     // Seed each split with its all-zero (top-of-each-part) combination.
     for (split_order, split) in splits.iter().enumerate() {
+        let indices = vec![0; split.parts.len()];
         heap.push(Reverse(State {
+            system_count: system_count(&split.parts, &indices),
             rank: 0,
             split_order,
-            indices: vec![0; split.parts.len()],
+            indices,
             frontier: 0,
         }));
     }
@@ -329,6 +360,7 @@ fn collect_for_k(
             let mut indices = state.indices.clone();
             indices[p] = next;
             heap.push(Reverse(State {
+                system_count: system_count(&split.parts, &indices),
                 rank: state.rank + 1,
                 split_order: state.split_order,
                 indices,

@@ -418,6 +418,53 @@ fn round_robins_between_splits_at_same_k() {
 }
 
 #[test]
+fn user_sourced_compound_beats_system_only_compound() {
+    // A deeper choice among user-sourced candidates (rank 1) still precedes a
+    // top-choice compound stitched entirely from system entries (rank 0):
+    // system_count is the leading key within a fixed k.
+    let snap = snapshot(
+        &[("あい", &["UA", "UB"]), ("う", &["UC"])],
+        &[("あ", &["SA"]), ("いう", &["SB"])],
+    );
+    let out = generate("あいう", &snap, CompoundGeneratorConfig::default(), None);
+    assert_eq!(out, vec!["UAUC", "UBUC", "SASB"]);
+}
+
+#[test]
+fn fewer_system_parts_beat_more_system_parts() {
+    // あい exists in both tiers, so its merged list is [UA(user), SA(system)].
+    // Picking SA makes a 1-system-part compound, which still precedes the
+    // all-system split あ+いう despite the latter's rank-0 indices.
+    let snap = snapshot(
+        &[("あい", &["UA"]), ("う", &["UC"])],
+        &[("あい", &["SA"]), ("あ", &["SD"]), ("いう", &["SB"])],
+    );
+    let out = generate("あいう", &snap, CompoundGeneratorConfig::default(), None);
+    assert_eq!(out, vec!["UAUC", "SAUC", "SDSB"]);
+}
+
+#[test]
+fn bangou_tsuki_user_word_precedes_system_only_compound() {
+    // ▽ばんごうつ*き: the user knows 番号; 付 sits at index 1 of the system つk
+    // entry, so 番号付 is rank 1 while the all-system 番後+虚 split is rank 0.
+    // Under rank-first ordering 番後虚 came out ahead; counting system-sourced
+    // parts first puts every 番号-based compound before it.
+    let snap = okuri_snapshot(
+        &[("ばんごう", &["番号"])],
+        &[("ばんご", &["番後"])],
+        &[],
+        &[("つk", &["突", "付"]), ("うつk", &["虚"])],
+    );
+    let out = generate(
+        "ばんごうつ",
+        &snap,
+        CompoundGeneratorConfig::default(),
+        Some('k'),
+    );
+    assert_eq!(out, vec!["番号突", "番号付", "番後虚"]);
+}
+
+#[test]
 fn mondaina_s_does_not_emit_okuri_ari_bracket_metadata() {
     // Real-world SKK-JISYO.L okuri-ari entries embed per-okurigana annotation
     // blocks (`[し/無/]`). Before the parser fix, the `[し` opener and `]`
